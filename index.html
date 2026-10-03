@@ -83,10 +83,10 @@
 
             <div id="auth-login-form" class="space-y-3">
                 <div>
-                    <label class="block text-[10px] uppercase tracking-wider text-zinc-400 mb-1 font-semibold">First Name</label>
-                    <input id="login-firstname" type="text" maxlength="30" autocomplete="username"
+                    <label class="block text-[10px] uppercase tracking-wider text-zinc-400 mb-1 font-semibold">Mobile</label>
+                    <input id="login-mobile" type="text" maxlength="20" autocomplete="tel"
                            class="w-full px-3 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 focus:outline-none focus:border-emerald-500 text-white text-sm"
-                           placeholder="Enter first name">
+                           placeholder="Enter mobile number">
                 </div>
                 <div>
                     <label class="block text-[10px] uppercase tracking-wider text-zinc-400 mb-1 font-semibold">Password</label>
@@ -103,17 +103,20 @@
             <div id="auth-register-form" class="space-y-3 hidden">
                 <div class="grid grid-cols-2 gap-2">
                     <div>
-                        <label class="block text-[10px] uppercase tracking-wider text-zinc-400 mb-1 font-semibold">First Name</label>
-                        <input id="register-firstname" type="text" maxlength="30" autocomplete="given-name"
+                        <label class="block text-[10px] uppercase tracking-wider text-zinc-400 mb-1 font-semibold">Name</label>
+                        <input id="register-name" type="text" maxlength="30" autocomplete="name"
                                class="w-full px-3 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 focus:outline-none focus:border-emerald-500 text-white text-sm"
-                               placeholder="First name">
+                               placeholder="Your name">
                     </div>
                     <div>
-                        <label class="block text-[10px] uppercase tracking-wider text-zinc-400 mb-1 font-semibold">Last Name</label>
-                        <input id="register-lastname" type="text" maxlength="30" autocomplete="family-name"
+                        <label class="block text-[10px] uppercase tracking-wider text-zinc-400 mb-1 font-semibold">Mobile</label>
+                        <input id="register-mobile" type="text" maxlength="30" autocomplete="tel"
                                class="w-full px-3 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 focus:outline-none focus:border-emerald-500 text-white text-sm"
-                               placeholder="Last name">
+                               placeholder="Mobile number">
                     </div>
+                </div>
+                <div class="text-[10px] leading-4 text-zinc-500 bg-zinc-900/70 border border-zinc-800 rounded-lg px-3 py-2">
+                    Your phone number is not used for gameplay or shared anywhere. It is used only as a unique identifier to avoid duplicate accounts and for login.
                 </div>
                 <div>
                     <label class="block text-[10px] uppercase tracking-wider text-zinc-400 mb-1 font-semibold">Password</label>
@@ -1147,11 +1150,11 @@
     // CUSTOM GAME ACCOUNT AUTHENTICATION
     // ============================================================
 
-    function normalizeFirstName(value) {
+    function normalizeName(value) {
         return String(value || '').trim().replace(/\s+/g, ' ');
     }
 
-    function normalizeLastName(value) {
+    function normalizeMobile(value) {
         return String(value || '').trim().replace(/\s+/g, ' ');
     }
 
@@ -1214,27 +1217,27 @@
     }
 
     async function registerUser() {
-        const firstName = normalizeFirstName(
-            document.getElementById('register-firstname').value
+        const name = normalizeName(
+            document.getElementById('register-name').value
         );
-        const lastName = normalizeLastName(
-            document.getElementById('register-lastname').value
+        const mobile = normalizeMobile(
+            document.getElementById('register-mobile').value
         );
         const password = document.getElementById('register-password').value;
         const confirm = document.getElementById('register-password-confirm').value;
 
-        if (!firstName || !lastName) {
-            setAuthMessage('Enter first name and last name.');
+        if (!name || !mobile) {
+            setAuthMessage('Enter name and mobile.');
             return;
         }
 
-        if (!/^[A-Za-z][A-Za-z0-9 _-]{1,29}$/.test(firstName)) {
-            setAuthMessage('First name must be 2-30 characters and start with a letter.');
+        if (!/^[A-Za-z][A-Za-z0-9 _-]{1,29}$/.test(name)) {
+            setAuthMessage('Name must be 2-30 characters and start with a letter.');
             return;
         }
 
-        if (!/^[A-Za-z][A-Za-z0-9 _-]{1,29}$/.test(lastName)) {
-            setAuthMessage('Last name must be 2-30 characters and start with a letter.');
+        if (!/^[0-9+() -]{7,20}$/.test(mobile)) {
+            setAuthMessage('Mobile number must be 7-20 characters.');
             return;
         }
 
@@ -1255,8 +1258,8 @@
             const { data, error } = await supabaseClient.rpc(
                 'register_least_count_player',
                 {
-                    p_first_name: firstName,
-                    p_last_name: lastName,
+                    p_name: name,
+                    p_mobile: mobile,
                     p_password: password
                 }
             );
@@ -1274,9 +1277,9 @@
         } catch (error) {
             console.error('Registration failed:', error);
             const msg = String(error?.message || 'Registration failed.');
-            if (msg.toLowerCase().includes('first_name_taken') ||
-                msg.toLowerCase().includes('first name already exists')) {
-                setAuthMessage('That first name is already registered. Please choose another.');
+            if (msg.toLowerCase().includes('mobile_taken') ||
+                msg.toLowerCase().includes('mobile already exists')) {
+                setAuthMessage('That mobile number is already registered. Please use another.');
             } else {
                 setAuthMessage(msg.replace(/^.*?\n/, ''));
             }
@@ -1286,13 +1289,13 @@
     }
 
     async function loginUser() {
-        const firstName = normalizeFirstName(
-            document.getElementById('login-firstname').value
+        const mobile = normalizeMobile(
+            document.getElementById('login-mobile').value
         );
         const password = document.getElementById('login-password').value;
 
-        if (!firstName || !password) {
-            setAuthMessage('Enter your first name and password.');
+        if (!mobile || !password) {
+            setAuthMessage('Enter your mobile and password.');
             return;
         }
 
@@ -1303,7 +1306,7 @@
             const { data, error } = await supabaseClient.rpc(
                 'login_least_count_player',
                 {
-                    p_first_name: firstName,
+                    p_mobile: mobile,
                     p_password: password
                 }
             );
@@ -1312,14 +1315,14 @@
 
             const result = Array.isArray(data) ? data[0] : data;
             if (!result?.session_token || !result?.player_id) {
-                throw new Error('Invalid first name or password.');
+                throw new Error('Invalid mobile or password.');
             }
 
             saveAuthSession(result.session_token);
             await handleCustomAuthenticatedUser(result);
         } catch (error) {
             console.error('Login failed:', error);
-            setAuthMessage('Invalid first name or password.');
+            setAuthMessage('Invalid mobile or password.');
         } finally {
             setAuthButtonsBusy(false, 'login-btn');
         }
@@ -1328,24 +1331,24 @@
     async function handleCustomAuthenticatedUser(account) {
         currentUser = {
             id: account.player_id,
-            first_name: account.first_name,
-            last_name: account.last_name
+            name: account.name,
+            mobile: account.mobile
         };
 
         currentProfile = {
             id: account.player_id,
-            first_name: account.first_name,
-            last_name: account.last_name
+            name: account.name,
+            mobile: account.mobile
         };
 
-        myName = currentProfile.first_name;
-        nicknameInput.value = currentProfile.first_name;
+        myName = currentProfile.name;
+        nicknameInput.value = currentProfile.name;
         nicknameInput.readOnly = true;
 
         const loggedName = document.getElementById('logged-in-name');
         if (loggedName) {
             loggedName.innerText =
-                `${currentProfile.first_name}${currentProfile.last_name ? ' ' + currentProfile.last_name : ''}`;
+                `${currentProfile.name}`;
             loggedName.classList.remove('hidden');
         }
 
@@ -1361,7 +1364,7 @@
         }
 
         refreshPublicRoomsList();
-        logTicker(`Welcome, ${currentProfile.first_name}!`);
+        logTicker(`Welcome, ${currentProfile.name}!`);
     }
 
     async function restoreCustomAuthentication() {
@@ -2612,7 +2615,7 @@
         if (!currentUser) { showAuthScreen(true); return; }
 
         myName =
-            String(currentProfile?.first_name || '').trim() ||
+            String(currentProfile?.name || '').trim() ||
             "Player";
 
         cardsPerPlayer =
@@ -2778,10 +2781,10 @@
         isSoloMode = false;
 
         myName =
-            String(currentProfile?.first_name || '').trim();
+            String(currentProfile?.name || '').trim();
 
         if (!myName) {
-            showLobbyError("Your account profile is missing a first name.");
+            showLobbyError("Your account profile is missing a name.");
             return;
         }
 
@@ -2903,7 +2906,7 @@
         isSoloMode = false;
 
         myName =
-            String(currentProfile?.first_name || '').trim();
+            String(currentProfile?.name || '').trim();
 
         let codeInput =
             document.getElementById(
@@ -6995,7 +6998,7 @@
                     const botGames = Number(row.bot_games_played || 0);
                     const realGames = Number(row.real_games_played || 0);
                     tr.innerHTML = `
-                        <td class="p-3 text-left"><div class="font-bold text-white">${escapeAccountStatsHtml(row.first_name)} ${escapeAccountStatsHtml(row.last_name)}</div></td>
+                        <td class="p-3 text-left"><div class="font-bold text-white">${escapeAccountStatsHtml(row.name)}</div></td>
                         <td class="p-3 text-right font-black text-indigo-300">${botCoins}</td>
                         <td class="p-3 text-right font-black text-emerald-300">${realCoins}</td>
                         <td class="p-3 text-right text-zinc-300">${botGames}</td>
