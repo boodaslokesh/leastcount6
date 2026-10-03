@@ -135,7 +135,7 @@
 
             <p id="auth-message" class="text-xs text-center mt-3 min-h-[18px]"></p>
             <p class="text-[10px] text-zinc-600 text-center mt-3">
-                Your password is handled by Supabase Authentication and is never stored in the game tables.
+                Your account and password are stored securely in the game database. No email address is required.
             </p>
         </div>
     </div>
@@ -912,18 +912,14 @@
 
     const supabaseClient = supabase.createClient(
         SUPABASE_BASE_URL,
-        SUPABASE_APIKEY,
-        {
-            auth: {
-                persistSession: true,
-                autoRefreshToken: true,
-                detectSessionInUrl: true
-            }
-        }
+        SUPABASE_APIKEY
     );
 
-    // Current authenticated player. Supabase Auth keeps the session;
-    // coin balances are never stored in browser localStorage.
+    // Custom game account session. No email address is created and no
+    // Supabase Auth signup/login/email service is used. Coin balances live
+    // only in Supabase; the browser stores only this login session token.
+    const GAME_AUTH_TOKEN_KEY = 'leastCountGameAuthTokenV1';
+    let authSessionToken = '';
     let currentUser = null;
     let currentProfile = null;
 
@@ -1034,7 +1030,7 @@
     }
 
     async function loadWallets() {
-        if (!currentUser) {
+        if (!currentUser || !authSessionToken) {
             botWallet = 0;
             realWallet = 0;
             renderWallets();
@@ -1042,16 +1038,16 @@
         }
 
         try {
-            const { data, error } = await supabaseClient
-                .from('player_wallets')
-                .select('bot_coins, real_coins')
-                .eq('user_id', currentUser.id)
-                .single();
+            const { data, error } = await supabaseClient.rpc(
+                'get_least_count_wallet',
+                { p_session_token: authSessionToken }
+            );
 
             if (error) throw error;
 
-            botWallet = Number(data?.bot_coins || 0);
-            realWallet = Number(data?.real_coins || 0);
+            const result = Array.isArray(data) ? data[0] : data;
+            botWallet = Number(result?.bot_coins || 0);
+            realWallet = Number(result?.real_coins || 0);
             renderWallets();
         } catch (error) {
             console.error('Wallet load failed:', error);
@@ -1089,11 +1085,12 @@
 
         try {
             const { data, error } = await supabaseClient.rpc(
-                'settle_game_wallet',
+                'settle_least_count_game_wallet',
                 {
+                    p_session_token: authSessionToken,
                     p_game_id: String(walletGameId),
                     p_wallet_type: useBotWallet ? 'bot' : 'real',
-                    p_delta: Math.trunc(delta),
+                    p_opponent_count: opponents,
                     p_game_code: String(roomCode || ''),
                     p_result: won ? 'win' : 'loss'
                 }
@@ -1126,21 +1123,15 @@
 
 
     // ============================================================
-    // AUTHENTICATION
+    // CUSTOM GAME ACCOUNT AUTHENTICATION
     // ============================================================
 
     function normalizeFirstName(value) {
         return String(value || '').trim().replace(/\s+/g, ' ');
     }
 
-    function authEmailFromFirstName(firstName) {
-        // The user logs in with first name. Supabase Auth still receives
-        // an internal email identifier; users never need to enter it.
-        const normalized = normalizeFirstName(firstName)
-            .toLowerCase()
-            .replace(/[^a-z0-9]/g, '');
-
-        return `${normalized}@leastcountgame.local`;
+    function normalizeLastName(value) {
+        return String(value || '').trim().replace(/\s+/g, ' ');
     }
 
     function setAuthMessage(message, isError = true) {
@@ -1158,7 +1149,6 @@
         const registerForm = document.getElementById('auth-register-form');
         const loginTab = document.getElementById('auth-login-tab');
         const registerTab = document.getElementById('auth-register-tab');
-
         const login = tab === 'login';
 
         loginForm.classList.toggle('hidden', !login);
@@ -1180,33 +1170,50 @@
     }
 
     function setAuthButtonsBusy(busy, buttonId) {
-        const ids = ['login-btn', 'register-btn'];
-        ids.forEach(id => {
+        ['login-btn', 'register-btn'].forEach(id => {
             const btn = document.getElementById(id);
             if (btn) btn.disabled = busy;
         });
-
         const btn = document.getElementById(buttonId);
         if (btn) btn.classList.toggle('opacity-50', busy);
+    }
+
+    function saveAuthSession(token) {
+        authSessionToken = String(token || '');
+        if (authSessionToken) {
+            localStorage.setItem(GAME_AUTH_TOKEN_KEY, authSessionToken);
+        } else {
+            localStorage.removeItem(GAME_AUTH_TOKEN_KEY);
+        }
+    }
+
+    function clearAuthSession() {
+        authSessionToken = '';
+        localStorage.removeItem(GAME_AUTH_TOKEN_KEY);
     }
 
     async function registerUser() {
         const firstName = normalizeFirstName(
             document.getElementById('register-firstname').value
         );
-        const lastName = normalizeFirstName(
+        const lastName = normalizeLastName(
             document.getElementById('register-lastname').value
         );
         const password = document.getElementById('register-password').value;
         const confirm = document.getElementById('register-password-confirm').value;
 
         if (!firstName || !lastName) {
-            setAuthMessage('First name and last name are required.');
+            setAuthMessage('Enter first name and last name.');
             return;
         }
 
         if (!/^[A-Za-z][A-Za-z0-9 _-]{1,29}$/.test(firstName)) {
             setAuthMessage('First name must be 2-30 characters and start with a letter.');
+            return;
+        }
+
+        if (!/^[A-Za-z][A-Za-z0-9 _-]{1,29}$/.test(lastName)) {
+            setAuthMessage('Last name must be 2-30 characters and start with a letter.');
             return;
         }
 
@@ -1224,43 +1231,33 @@
         setAuthMessage('Creating account...', false);
 
         try {
-            const email = authEmailFromFirstName(firstName);
-
-            const { data, error } = await supabaseClient.auth.signUp({
-                email,
-                password,
-                options: {
-                    data: {
-                        first_name: firstName,
-                        last_name: lastName
-                    }
+            const { data, error } = await supabaseClient.rpc(
+                'register_least_count_player',
+                {
+                    p_first_name: firstName,
+                    p_last_name: lastName,
+                    p_password: password
                 }
-            });
+            );
 
             if (error) throw error;
 
-            // If email confirmation is enabled in the Supabase project,
-            // signUp returns no session. This game intentionally uses
-            // first-name login, so email confirmation should be disabled.
-            if (!data.session) {
-                setAuthMessage(
-                    'Account created, but Supabase email confirmation is enabled. Disable email confirmation in Supabase Auth settings, then login.',
-                    true
-                );
-                switchAuthTab('login');
-                document.getElementById('login-firstname').value = firstName;
-                return;
+            const result = Array.isArray(data) ? data[0] : data;
+            if (!result?.session_token || !result?.player_id) {
+                throw new Error('Account was not created correctly.');
             }
 
-            await handleAuthenticatedUser(data.user);
+            saveAuthSession(result.session_token);
+            await handleCustomAuthenticatedUser(result);
             setAuthMessage('Account created successfully.', false);
         } catch (error) {
             console.error('Registration failed:', error);
             const msg = String(error?.message || 'Registration failed.');
-            if (msg.toLowerCase().includes('already registered')) {
+            if (msg.toLowerCase().includes('first_name_taken') ||
+                msg.toLowerCase().includes('first name already exists')) {
                 setAuthMessage('That first name is already registered. Please choose another.');
             } else {
-                setAuthMessage(msg);
+                setAuthMessage(msg.replace(/^.*?\n/, ''));
             }
         } finally {
             setAuthButtonsBusy(false, 'register-btn');
@@ -1282,16 +1279,23 @@
         setAuthMessage('Logging in...', false);
 
         try {
-            const email = authEmailFromFirstName(firstName);
-
-            const { data, error } = await supabaseClient.auth.signInWithPassword({
-                email,
-                password
-            });
+            const { data, error } = await supabaseClient.rpc(
+                'login_least_count_player',
+                {
+                    p_first_name: firstName,
+                    p_password: password
+                }
+            );
 
             if (error) throw error;
 
-            await handleAuthenticatedUser(data.user);
+            const result = Array.isArray(data) ? data[0] : data;
+            if (!result?.session_token || !result?.player_id) {
+                throw new Error('Invalid first name or password.');
+            }
+
+            saveAuthSession(result.session_token);
+            await handleCustomAuthenticatedUser(result);
         } catch (error) {
             console.error('Login failed:', error);
             setAuthMessage('Invalid first name or password.');
@@ -1300,106 +1304,95 @@
         }
     }
 
-    async function handleAuthenticatedUser(user) {
-        currentUser = user;
+    async function handleCustomAuthenticatedUser(account) {
+        currentUser = {
+            id: account.player_id,
+            first_name: account.first_name,
+            last_name: account.last_name
+        };
 
-        let profile = null;
-        const { data: existingProfile, error: profileError } =
-            await supabaseClient
-                .from('player_profiles')
-                .select('id, first_name, last_name')
-                .eq('id', user.id)
-                .maybeSingle();
+        currentProfile = {
+            id: account.player_id,
+            first_name: account.first_name,
+            last_name: account.last_name
+        };
 
-        if (profileError) {
-            console.error('Profile read failed:', profileError);
-        } else {
-            profile = existingProfile;
-        }
-
-        // If the profile row does not exist (for an older account),
-        // create it from Auth metadata.
-        if (!profile) {
-            const firstName =
-                normalizeFirstName(user.user_metadata?.first_name) ||
-                normalizeFirstName((user.email || '').split('@')[0]) ||
-                'Player';
-            const lastName =
-                normalizeFirstName(user.user_metadata?.last_name) || '';
-
-            const { data: createdProfile, error: createProfileError } =
-                await supabaseClient
-                    .from('player_profiles')
-                    .insert({
-                        id: user.id,
-                        first_name: firstName,
-                        last_name: lastName
-                    })
-                    .select('id, first_name, last_name')
-                    .single();
-
-            if (createProfileError) {
-                console.error('Profile creation failed:', createProfileError);
-                throw createProfileError;
-            }
-
-            profile = createdProfile;
-        }
-
-        currentProfile = profile;
-
-        myName = profile.first_name;
-        nicknameInput.value = profile.first_name;
+        myName = currentProfile.first_name;
+        nicknameInput.value = currentProfile.first_name;
         nicknameInput.readOnly = true;
 
         const loggedName = document.getElementById('logged-in-name');
         if (loggedName) {
             loggedName.innerText =
-                `${profile.first_name}${profile.last_name ? ' ' + profile.last_name : ''}`;
+                `${currentProfile.first_name}${currentProfile.last_name ? ' ' + currentProfile.last_name : ''}`;
             loggedName.classList.remove('hidden');
         }
 
         document.getElementById('logout-btn')?.classList.remove('hidden');
         showAuthScreen(false);
 
-        await loadWallets();
-        refreshPublicRoomsList();
-        logTicker(`Welcome, ${profile.first_name}!`);
-    }
-
-    async function initializeAuthentication() {
-        const { data: { session } } =
-            await supabaseClient.auth.getSession();
-
-        if (session?.user) {
-            try {
-                await handleAuthenticatedUser(session.user);
-                return;
-            } catch (error) {
-                console.error('Session initialization failed:', error);
-            }
+        if (account.bot_coins !== undefined) {
+            botWallet = Number(account.bot_coins || 0);
+            realWallet = Number(account.real_coins || 0);
+            renderWallets();
+        } else {
+            await loadWallets();
         }
 
-        currentUser = null;
-        currentProfile = null;
-        showAuthScreen(true);
-        renderWallets();
+        refreshPublicRoomsList();
+        logTicker(`Welcome, ${currentProfile.first_name}!`);
+    }
+
+    async function restoreCustomAuthentication() {
+        const token = localStorage.getItem(GAME_AUTH_TOKEN_KEY) || '';
+        if (!token) {
+            currentUser = null;
+            currentProfile = null;
+            showAuthScreen(true);
+            renderWallets();
+            return;
+        }
+
+        try {
+            const { data, error } = await supabaseClient.rpc(
+                'get_least_count_player',
+                { p_session_token: token }
+            );
+
+            if (error) throw error;
+
+            const result = Array.isArray(data) ? data[0] : data;
+            if (!result?.player_id) throw new Error('Session expired');
+
+            authSessionToken = token;
+            await handleCustomAuthenticatedUser(result);
+        } catch (error) {
+            console.warn('Saved login session could not be restored:', error);
+            clearAuthSession();
+            currentUser = null;
+            currentProfile = null;
+            showAuthScreen(true);
+            renderWallets();
+        }
     }
 
     async function logoutUser() {
         try {
-            // Do not allow an active game session to keep using an old auth
-            // object after logout.
             if (roomChannel) {
                 await supabaseClient.removeChannel(roomChannel);
                 roomChannel = null;
             }
 
-            await supabaseClient.auth.signOut();
+            if (authSessionToken) {
+                await supabaseClient.rpc('logout_least_count_player', {
+                    p_session_token: authSessionToken
+                });
+            }
         } catch (error) {
             console.error('Logout failed:', error);
         }
 
+        clearAuthSession();
         currentUser = null;
         currentProfile = null;
         myName = '';
@@ -1416,7 +1409,6 @@
         }
 
         document.getElementById('logout-btn')?.classList.add('hidden');
-
         document.getElementById('game-board-screen')?.classList.add('hidden');
         document.getElementById('waiting-screen')?.classList.add('hidden');
         document.getElementById('lobby-screen')?.classList.remove('hidden');
@@ -1425,13 +1417,6 @@
         switchAuthTab('login');
         setAuthMessage('Logged out.', false);
     }
-
-    supabaseClient.auth.onAuthStateChange((event, session) => {
-        if (event === 'SIGNED_OUT') {
-            currentUser = null;
-            currentProfile = null;
-        }
-    });
 
     let deck = [];
     let discardPile = [];
@@ -1858,7 +1843,7 @@
     window.addEventListener(
         'load',
         () => {
-            initializeAuthentication();
+            restoreCustomAuthentication();
         }
     );
 
