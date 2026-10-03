@@ -194,6 +194,27 @@
         </div>
     </header>
 
+    <!-- ACCOUNT / STATS QUICK LINKS -->
+    <nav id="account-stats-nav"
+         class="w-full bg-zinc-950 border-b border-zinc-800 px-2 py-1.5 shrink-0 overflow-x-auto">
+        <div class="max-w-5xl mx-auto flex items-center justify-center sm:justify-start gap-1.5 min-w-max">
+            <button type="button" onclick="toggleMyGameHistoryModal(true)"
+                    class="px-3 py-1.5 rounded-lg text-[10px] sm:text-[11px] font-bold text-emerald-300 hover:text-white hover:bg-zinc-900 border border-transparent hover:border-zinc-800 transition">
+                Your Game History
+            </button>
+            <span class="text-zinc-700">|</span>
+            <button type="button" onclick="toggleUsersStatsModal(true)"
+                    class="px-3 py-1.5 rounded-lg text-[10px] sm:text-[11px] font-bold text-amber-300 hover:text-white hover:bg-zinc-900 border border-transparent hover:border-zinc-800 transition">
+                Total Game Users
+            </button>
+            <span class="text-zinc-700">|</span>
+            <button type="button" onclick="toggleCoinInstructionsModal(true)"
+                    class="px-3 py-1.5 rounded-lg text-[10px] sm:text-[11px] font-bold text-indigo-300 hover:text-white hover:bg-zinc-900 border border-transparent hover:border-zinc-800 transition">
+                Coins Instructions
+            </button>
+        </div>
+    </nav>
+
     <!-- STICKY PLAYER SCORES ROW CONTAINER -->
     <div id="sticky-scores-wrapper"
          class="hidden w-full bg-black border-b border-zinc-800 px-2 py-1.5 shrink-0 space-y-1">
@@ -6628,6 +6649,118 @@
 
 
     <!-- ========================================================= -->
+    <!-- PLAYER ACCOUNT / COIN STATISTICS MODALS                 -->
+    <!-- ========================================================= -->
+
+    <div id="my-game-history-modal"
+         class="fixed inset-0 bg-black/95 backdrop-blur-sm hidden items-center justify-center p-3 sm:p-5 z-[210]">
+        <div class="bg-zinc-950 border border-emerald-500/25 w-full max-w-5xl h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+            <div class="flex items-center justify-between gap-3 p-4 border-b border-zinc-800 shrink-0">
+                <div>
+                    <h2 class="text-lg font-black text-emerald-300">Your Game History</h2>
+                    <p class="text-[11px] text-zinc-500 mt-1">Complete coin-settlement history for your account.</p>
+                </div>
+                <button onclick="toggleMyGameHistoryModal(false)"
+                        class="px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-xs font-bold text-white hover:bg-zinc-800">
+                    Close
+                </button>
+            </div>
+
+            <div class="p-4 border-b border-zinc-800 shrink-0 space-y-3">
+                <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                    <label for="my-game-history-type" class="text-xs font-bold text-zinc-400">Game Type</label>
+                    <select id="my-game-history-type" onchange="loadMyGameHistory()"
+                            class="w-full sm:w-auto min-w-[180px] px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-xs font-bold text-white focus:outline-none focus:border-emerald-500">
+                        <option value="all">All Games</option>
+                        <option value="bot">Bot Games</option>
+                        <option value="real">Real Multiplayer Games</option>
+                    </select>
+                    <button onclick="loadMyGameHistory()"
+                            class="px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-xs font-bold text-emerald-300 hover:bg-zinc-800">
+                        Refresh
+                    </button>
+                </div>
+                <div id="my-game-history-summary" class="text-xs text-zinc-400">Loading...</div>
+            </div>
+
+            <div id="my-game-history-list" class="p-4 space-y-3 overflow-y-auto flex-1"></div>
+        </div>
+    </div>
+
+    <div id="users-stats-modal"
+         class="fixed inset-0 bg-black/95 backdrop-blur-sm hidden items-center justify-center p-3 sm:p-5 z-[210]">
+        <div class="bg-zinc-950 border border-amber-500/25 w-full max-w-6xl h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+            <div class="flex items-center justify-between gap-3 p-4 border-b border-zinc-800 shrink-0">
+                <div>
+                    <h2 class="text-lg font-black text-amber-300">Total Game Users</h2>
+                    <p class="text-[11px] text-zinc-500 mt-1">Registered users, current coins, and completed game counts.</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="loadUsersStats()" class="px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-xs font-bold text-amber-300 hover:bg-zinc-800">Refresh</button>
+                    <button onclick="toggleUsersStatsModal(false)" class="px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-xs font-bold text-white hover:bg-zinc-800">Close</button>
+                </div>
+            </div>
+
+            <div id="users-stats-summary" class="p-4 border-b border-zinc-800 shrink-0 text-xs text-zinc-400">Loading...</div>
+            <div id="users-stats-list" class="p-4 overflow-y-auto flex-1"></div>
+        </div>
+    </div>
+
+    <div id="coin-instructions-modal"
+         class="fixed inset-0 bg-black/90 backdrop-blur-sm hidden items-center justify-center p-4 z-[210]">
+        <div class="bg-zinc-950 border border-indigo-500/30 w-full max-w-2xl max-h-[88vh] rounded-2xl p-5 shadow-2xl overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-3 mb-4">
+                <div>
+                    <h2 class="text-lg font-black text-indigo-300">Coins Instructions</h2>
+                    <p class="text-[11px] text-zinc-500 mt-1">How Bot Coins and Real Coins are calculated.</p>
+                </div>
+                <button onclick="toggleCoinInstructionsModal(false)" class="text-zinc-400 hover:text-white font-bold text-xl px-2">&times;</button>
+            </div>
+
+            <div class="space-y-4 text-xs sm:text-sm text-zinc-300 leading-relaxed">
+                <section>
+                    <h3 class="font-black text-white mb-1">1. Two separate wallets</h3>
+                    <p><strong class="text-indigo-300">Bot Coins</strong> are used for games played against computer/bot players. <strong class="text-emerald-300">Real Coins</strong> are used for online multiplayer games with other registered players. The two balances are stored separately.</p>
+                </section>
+                <section>
+                    <h3 class="font-black text-white mb-1">2. Winning a game</h3>
+                    <p>A win gives <strong class="text-emerald-300">100 coins for each opponent</strong>.</p>
+                    <div class="bg-black border border-zinc-800 rounded-xl p-3 mt-2 font-mono text-[11px] text-zinc-200">Win reward = 100 × number of opponents</div>
+                    <p class="mt-2">Example: 3 total players means 2 opponents, so the winner receives <strong class="text-emerald-300">200 coins</strong>.</p>
+                </section>
+                <section>
+                    <h3 class="font-black text-white mb-1">3. Losing a game</h3>
+                    <p>A completed loss deducts <strong class="text-rose-300">100 coins</strong> from the wallet used for that game.</p>
+                </section>
+                <section>
+                    <h3 class="font-black text-white mb-1">4. Bots count as opponents</h3>
+                    <p>Every bot in a solo game counts as an opponent for the winner's reward. For example, you + 3 bots = 3 opponents = <strong class="text-emerald-300">300 Bot Coins</strong> for a win.</p>
+                </section>
+                <section>
+                    <h3 class="font-black text-white mb-1">5. No duplicate payout</h3>
+                    <p>Each completed game/wallet combination is settled only once in Supabase. Refreshing the page or receiving the game-over event again does not create another payout.</p>
+                </section>
+                <section>
+                    <h3 class="font-black text-white mb-1">6. When coins are added</h3>
+                    <p>Coins are added or deducted when the game reaches its completed winner/loss settlement. The server calculates the amount; the browser cannot choose an arbitrary coin amount.</p>
+                </section>
+                <section>
+                    <h3 class="font-black text-white mb-1">7. History</h3>
+                    <p>Your Game History shows every recorded win/loss settlement, the wallet used, game code, opponent count, coin change, and date/time.</p>
+                </section>
+                <section class="border-t border-zinc-800 pt-3">
+                    <h3 class="font-black text-white mb-1">8. Important</h3>
+                    <p>Coins are currently game-account balances only. They are not real money and cannot be withdrawn or converted to cash by this game logic.</p>
+                </section>
+            </div>
+
+            <div class="flex justify-end pt-4">
+                <button onclick="toggleCoinInstructionsModal(false)" class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl text-xs font-bold">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================================= -->
     <!-- ALL-IN-ONE: DATABASE GAME HISTORY VIEW                   -->
     <!-- ========================================================= -->
     <div id="database-history-modal"
@@ -6670,6 +6803,215 @@
     </div>
 
     <script>
+        // ============================================================
+        // ACCOUNT GAME HISTORY / USER STATISTICS
+        // ============================================================
+
+        function escapeAccountStatsHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function toggleMyGameHistoryModal(show) {
+            const modal = document.getElementById('my-game-history-modal');
+            if (!modal) return;
+            modal.classList.toggle('hidden', !show);
+            modal.classList.toggle('flex', show);
+            if (show) loadMyGameHistory();
+        }
+
+        function toggleUsersStatsModal(show) {
+            const modal = document.getElementById('users-stats-modal');
+            if (!modal) return;
+            modal.classList.toggle('hidden', !show);
+            modal.classList.toggle('flex', show);
+            if (show) loadUsersStats();
+        }
+
+        function toggleCoinInstructionsModal(show) {
+            const modal = document.getElementById('coin-instructions-modal');
+            if (!modal) return;
+            modal.classList.toggle('hidden', !show);
+            modal.classList.toggle('flex', show);
+        }
+
+        function formatAccountDate(value) {
+            if (!value) return '—';
+            const date = new Date(value);
+            return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+        }
+
+        async function loadMyGameHistory() {
+            const summary = document.getElementById('my-game-history-summary');
+            const list = document.getElementById('my-game-history-list');
+            const typeSelect = document.getElementById('my-game-history-type');
+            if (!summary || !list || !typeSelect) return;
+
+            if (!currentUser || !authSessionToken) {
+                summary.innerText = 'Please log in to view your game history.';
+                list.innerHTML = '<div class="text-center text-xs text-zinc-600 py-12">Login required.</div>';
+                return;
+            }
+
+            summary.innerText = 'Loading your game history...';
+            list.innerHTML = '';
+
+            try {
+                const walletType = typeSelect.value || 'all';
+                const { data, error } = await supabaseClient.rpc(
+                    'get_least_count_my_game_history',
+                    {
+                        p_session_token: authSessionToken,
+                        p_wallet_type: walletType
+                    }
+                );
+
+                if (error) throw error;
+
+                const rows = Array.isArray(data) ? data : [];
+                const botRows = rows.filter(r => r.wallet_type === 'bot');
+                const realRows = rows.filter(r => r.wallet_type === 'real');
+                const wins = rows.filter(r => r.result === 'win').length;
+                const losses = rows.filter(r => r.result === 'loss').length;
+
+                summary.innerHTML =
+                    `<span class="text-white font-bold">${rows.length}</span> games shown` +
+                    ` · Wins: <span class="text-emerald-300 font-bold">${wins}</span>` +
+                    ` · Losses: <span class="text-rose-300 font-bold">${losses}</span>` +
+                    ` · Bot: <span class="text-indigo-300 font-bold">${botRows.length}</span>` +
+                    ` · Real: <span class="text-emerald-300 font-bold">${realRows.length}</span>`;
+
+                if (!rows.length) {
+                    list.innerHTML = '<div class="text-center text-xs text-zinc-600 py-12">No completed game records found.</div>';
+                    return;
+                }
+
+                rows.forEach(row => {
+                    const isWin = row.result === 'win';
+                    const isBot = row.wallet_type === 'bot';
+                    const card = document.createElement('article');
+                    card.className = 'bg-black border border-zinc-800 rounded-2xl p-4 shadow-xl';
+                    const delta = Number(row.delta || 0);
+                    const deltaText = delta > 0 ? `+${delta}` : String(delta);
+
+                    card.innerHTML = `
+                        <div class="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <span class="text-sm font-black ${isWin ? 'text-emerald-300' : 'text-rose-300'}">
+                                        ${isWin ? 'WIN' : 'LOSS'}
+                                    </span>
+                                    <span class="text-[10px] px-2 py-0.5 rounded-full border ${isBot ? 'text-indigo-300 border-indigo-500/30 bg-indigo-500/10' : 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10'}">
+                                        ${isBot ? 'BOT GAME' : 'REAL GAME'}
+                                    </span>
+                                </div>
+                                <div class="text-xs text-zinc-400 mt-2">Game: <span class="text-white font-semibold break-all">${escapeAccountStatsHtml(row.game_id)}</span></div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-[10px] text-zinc-500 uppercase">Coin Change</div>
+                                <div class="text-base font-black ${delta >= 0 ? 'text-emerald-300' : 'text-rose-300'}">${deltaText}</div>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
+                            <div class="bg-zinc-900 rounded-lg p-2"><div class="text-[9px] text-zinc-500">Status</div><div class="text-xs text-white font-bold">${isWin ? 'Won' : 'Lost'}</div></div>
+                            <div class="bg-zinc-900 rounded-lg p-2"><div class="text-[9px] text-zinc-500">Wallet</div><div class="text-xs text-white font-bold">${isBot ? 'Bot Coins' : 'Real Coins'}</div></div>
+                            <div class="bg-zinc-900 rounded-lg p-2"><div class="text-[9px] text-zinc-500">Opponents</div><div class="text-xs text-white font-bold">${Number(row.opponent_count || 0)}</div></div>
+                            <div class="bg-zinc-900 rounded-lg p-2"><div class="text-[9px] text-zinc-500">Date / Time</div><div class="text-xs text-white font-bold">${escapeAccountStatsHtml(formatAccountDate(row.created_at))}</div></div>
+                        </div>
+                        <div class="text-[10px] text-zinc-600 mt-3">Game Code: ${escapeAccountStatsHtml(row.game_code || '—')}</div>
+                    `;
+                    list.appendChild(card);
+                });
+            } catch (error) {
+                console.error('Unable to load personal game history:', error);
+                summary.innerText = 'Unable to load your game history.';
+                list.innerHTML = `<div class="text-center text-xs text-rose-400 py-12">Unable to load history. ${escapeAccountStatsHtml(error?.message || '')}</div>`;
+            }
+        }
+
+        async function loadUsersStats() {
+            const summary = document.getElementById('users-stats-summary');
+            const list = document.getElementById('users-stats-list');
+            if (!summary || !list) return;
+
+            if (!currentUser || !authSessionToken) {
+                summary.innerText = 'Please log in to view user statistics.';
+                list.innerHTML = '<div class="text-center text-xs text-zinc-600 py-12">Login required.</div>';
+                return;
+            }
+
+            summary.innerText = 'Loading user statistics...';
+            list.innerHTML = '';
+
+            try {
+                const { data, error } = await supabaseClient.rpc(
+                    'get_least_count_user_statistics',
+                    { p_session_token: authSessionToken }
+                );
+                if (error) throw error;
+
+                const rows = Array.isArray(data) ? data : [];
+                const totalUsers = rows.length;
+                const totalBotGames = rows.reduce((sum, r) => sum + Number(r.bot_games_played || 0), 0);
+                const totalRealGames = rows.reduce((sum, r) => sum + Number(r.real_games_played || 0), 0);
+
+                summary.innerHTML =
+                    `<span class="text-white font-bold">${totalUsers}</span> registered users` +
+                    ` · Bot game records: <span class="text-indigo-300 font-bold">${totalBotGames}</span>` +
+                    ` · Real game records: <span class="text-emerald-300 font-bold">${totalRealGames}</span>`;
+
+                if (!rows.length) {
+                    list.innerHTML = '<div class="text-center text-xs text-zinc-600 py-12">No registered users found.</div>';
+                    return;
+                }
+
+                const table = document.createElement('div');
+                table.className = 'overflow-x-auto';
+                table.innerHTML = `
+                    <table class="w-full min-w-[760px] text-xs border-collapse">
+                        <thead>
+                            <tr class="border-b border-zinc-800 text-zinc-500 uppercase tracking-wider text-[9px]">
+                                <th class="text-left p-3">Player</th>
+                                <th class="text-right p-3">Bot Coins</th>
+                                <th class="text-right p-3">Real Coins</th>
+                                <th class="text-right p-3">Bot Games</th>
+                                <th class="text-right p-3">Real Games</th>
+                                <th class="text-right p-3">Total Games</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>`;
+                const tbody = table.querySelector('tbody');
+
+                rows.forEach(row => {
+                    const tr = document.createElement('tr');
+                    tr.className = 'border-b border-zinc-900 hover:bg-zinc-900/60';
+                    const botCoins = Number(row.bot_coins || 0);
+                    const realCoins = Number(row.real_coins || 0);
+                    const botGames = Number(row.bot_games_played || 0);
+                    const realGames = Number(row.real_games_played || 0);
+                    tr.innerHTML = `
+                        <td class="p-3 text-left"><div class="font-bold text-white">${escapeAccountStatsHtml(row.first_name)} ${escapeAccountStatsHtml(row.last_name)}</div></td>
+                        <td class="p-3 text-right font-black text-indigo-300">${botCoins}</td>
+                        <td class="p-3 text-right font-black text-emerald-300">${realCoins}</td>
+                        <td class="p-3 text-right text-zinc-300">${botGames}</td>
+                        <td class="p-3 text-right text-zinc-300">${realGames}</td>
+                        <td class="p-3 text-right font-bold text-white">${botGames + realGames}</td>`;
+                    tbody.appendChild(tr);
+                });
+
+                list.appendChild(table);
+            } catch (error) {
+                console.error('Unable to load user statistics:', error);
+                summary.innerText = 'Unable to load user statistics.';
+                list.innerHTML = `<div class="text-center text-xs text-rose-400 py-12">Unable to load user statistics. ${escapeAccountStatsHtml(error?.message || '')}</div>`;
+            }
+        }
+
         // ============================================================
         // ALL-IN-ONE DATABASE HISTORY PAGE
         // Kept inside this same HTML file; no game-history.html needed.
