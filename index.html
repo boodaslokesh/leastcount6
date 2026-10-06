@@ -184,21 +184,17 @@
                     <span id="bot-wallet-balance" class="text-[10px] text-indigo-200 font-black tabular-nums">0</span>
                 </div>
 
-                <div id="real-wallet-card"
-                     title="Real multiplayer game wallet"
-                     class="flex items-center gap-1 bg-zinc-900 border border-emerald-500/30 px-1.5 py-1 rounded-lg">
-                    <span class="text-[9px] text-emerald-300 font-bold">REAL</span>
-                    <span id="real-wallet-balance" class="text-[10px] text-emerald-200 font-black tabular-nums">0</span>
-                </div>
                 <button id="demo-wallet-card"
                         type="button"
                         onclick="openDemoWalletModal()"
-                        title="Server-backed Demo wallet"
+                        title="Server-backed Wallet"
                         class="flex items-center gap-1 bg-zinc-900 border border-amber-500/40 hover:border-amber-400 px-1.5 py-1 rounded-lg transition">
-                    <span class="text-[9px] text-amber-300 font-bold">₹ Wallet</span>
+                    <span class="text-[9px] text-amber-300 font-bold">₹ WALLET</span>
                     <span id="demo-wallet-balance" class="text-[10px] text-amber-200 font-black tabular-nums">0</span>
                     <span class="text-[8px] text-zinc-500">+</span>
                 </button>
+
+                <button id="withdraw-wallet-btn" type="button" onclick="openWithdrawModal()" title="Withdraw from wallet" class="flex items-center justify-center w-8 h-8 rounded-lg bg-zinc-900 border border-emerald-500/30 hover:border-emerald-400 hover:bg-zinc-800 transition text-base">💸</button>
             </div>
 
             <div id="game-status-banner"
@@ -353,11 +349,11 @@
                         <label class="block text-[10px] uppercase tracking-wider text-zinc-400 mb-1 font-semibold">Game Type</label>
                         <select id="bet-mode-select" onchange="toggleBetAmountSelect()" class="w-full px-2 py-2 rounded-xl bg-zinc-900 border border-zinc-800 focus:outline-none focus:border-emerald-500 text-white font-medium text-xs">
                             <option value="free" selected>Free</option>
-                            <option value="bet">Demo Bet</option>
+                            <option value="bet">Wallet Bet</option>
                         </select>
                     </div>
                     <div id="bet-amount-wrap" class="hidden">
-                        <label class="block text-[10px] uppercase tracking-wider text-zinc-400 mb-1 font-semibold">Demo Bet Amount</label>
+                        <label class="block text-[10px] uppercase tracking-wider text-zinc-400 mb-1 font-semibold">Wallet Bet Amount</label>
                         <select id="bet-amount-select" class="w-full px-2 py-2 rounded-xl bg-zinc-900 border border-zinc-800 focus:outline-none focus:border-emerald-500 text-white font-medium text-xs">
                             <option value="5">₹5</option><option value="10">₹10</option><option value="15">₹15</option><option value="20">₹20</option><option value="25">₹25</option><option value="30">₹30</option><option value="35">₹35</option><option value="40">₹40</option><option value="45">₹45</option><option value="50">₹50</option><option value="55">₹55</option><option value="60">₹60</option><option value="65">₹65</option><option value="70">₹70</option><option value="75">₹75</option><option value="80">₹80</option><option value="85">₹85</option><option value="90">₹90</option><option value="95">₹95</option><option value="100">₹100</option>
                         </select>
@@ -366,13 +362,7 @@
             </div>
 
             <div class="space-y-2.5 pt-1">
-
-                <button onclick="startSoloGame()"
-                        class="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-lg transition transform active:scale-95 text-sm">
-                    🤖 Play vs Computer (Solo)
-                </button>
-
-                <button onclick="createRoom()"
+<button onclick="createRoom()"
                         id="create-room-btn"
                         class="w-full py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-xl shadow-lg transition transform active:scale-95 text-sm">
                     Create Room (Host)
@@ -11411,7 +11401,7 @@
 
     function getBetModeLabel() {
         return betMode === 'bet'
-            ? `Demo Bet · ₹${Number(betAmount || 0)}`
+            ? `Wallet Bet · ₹${Number(betAmount || 0)}`
             : 'Free Game';
     }
 
@@ -12483,7 +12473,7 @@
         if (betMode === 'bet' && Number(betAmount) > 0) {
             extra = `
                 <div class="mt-3 pt-3 border-t border-emerald-500/20 text-center">
-                    <div class="text-emerald-300 font-black mb-1.5">🧪 Demo Bet · ₹${Number(betAmount)} entry · 5% house / 95% winner</div>
+                    <div class="text-emerald-300 font-black mb-1.5">🧪 Wallet Bet · ₹${Number(betAmount)} entry · 5% house / 95% winner</div>
                     <button type="button" onclick="openBetHistoryModal()" class="text-[10px] text-emerald-300 hover:text-emerald-200 underline font-black">View complete Bet History for this room</button>
                 </div>`;
         }
@@ -12548,7 +12538,7 @@
     <div id="end-bet-room-confirm-modal" class="fixed inset-0 bg-black/95 backdrop-blur-md hidden items-center justify-center p-4 z-[210]">
       <div class="bg-black border border-rose-500/40 w-full max-w-sm rounded-2xl p-5 shadow-2xl text-center">
         <div class="text-3xl mb-2">⚠️</div>
-        <h3 class="text-lg font-black text-rose-300">End Demo Bet Game?</h3>
+        <h3 class="text-lg font-black text-rose-300">End Wallet Bet Game?</h3>
         <p class="text-xs text-zinc-400 mt-2 leading-relaxed">This will close the current room session. Only completed games will be included in the cumulative settlement. You cannot start another game in this room after closing it.</p>
         <div class="flex gap-2 mt-5">
           <button type="button" onclick="closeEndBetRoomConfirm()" class="flex-1 py-2.5 bg-zinc-800 text-white rounded-xl text-xs font-black">No</button>
@@ -12566,7 +12556,7 @@
     </div>
     <div id="bet-final-settlement-modal" class="fixed inset-0 bg-black/95 backdrop-blur-md hidden items-center justify-center p-3 sm:p-4 z-[190]">
       <div class="bg-black border border-amber-400/50 w-full max-w-lg rounded-2xl p-5 shadow-2xl">
-        <div class="text-center mb-4"><div class="text-3xl">💰🏆</div><h3 class="text-xl font-black text-amber-300 mt-1">Demo Settlement</h3><p id="bet-final-winner-text" class="text-xs text-zinc-400 mt-1"></p></div>
+        <div class="text-center mb-4"><div class="text-3xl">💰🏆</div><h3 class="text-xl font-black text-amber-300 mt-1">Wallet Settlement</h3><p id="bet-final-winner-text" class="text-xs text-zinc-400 mt-1"></p></div>
         <div id="bet-final-settlement-content"></div>
         <div class="flex justify-end pt-4"><button onclick="closeBetFinalSettlementModal()" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black rounded-xl text-xs font-black">Done</button></div>
       </div>
@@ -12574,11 +12564,23 @@
 
 
     <!-- ============================================================
-         DEMO WALLET — SERVER BACKED
-         The ₹ DEMO balance is stored in least_count_players.bot_coins.
+         WALLET — SERVER BACKED
+         The ₹ WALLET balance is stored in least_count_players.bot_coins.
          Admin-approved deposits and demo-game transactions use the
          same server-side demo wallet.
          ============================================================ -->
+    <div id="withdraw-modal" class="fixed inset-0 bg-black/95 backdrop-blur-md hidden items-center justify-center p-3 sm:p-4 z-[230]">
+      <div class="bg-black border border-emerald-500/40 w-full max-w-sm rounded-2xl p-4 shadow-2xl">
+        <div class="flex items-start justify-between gap-3"><div><div class="text-[10px] uppercase tracking-wider text-emerald-300 font-black">💸 Withdraw</div><h3 class="text-lg font-black text-white mt-1">Withdraw from Wallet</h3><p class="text-[10px] text-zinc-500 mt-1">Minimum withdrawal amount is ₹100.</p></div><button type="button" onclick="closeWithdrawModal()" class="w-8 h-8 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-lg">×</button></div>
+        <div class="mt-4 rounded-xl border border-zinc-800 bg-zinc-950 p-3"><div class="text-[8px] uppercase tracking-wider text-zinc-500 font-black">Available Wallet</div><div class="text-xl font-black text-emerald-300 mt-1">₹<span id="withdraw-available">0</span></div></div>
+        <label class="block text-[8px] uppercase tracking-wider text-zinc-500 font-black mt-3 mb-1">Withdrawal Amount</label><input id="withdraw-amount" type="number" min="100" step="1" inputmode="decimal" placeholder="Minimum ₹100" class="w-full px-3 py-2.5 rounded-lg bg-zinc-950 border border-zinc-800 focus:outline-none focus:border-emerald-500 text-white text-[11px] font-medium">
+        <label class="block text-[8px] uppercase tracking-wider text-zinc-500 font-black mt-3 mb-1">UPI ID / Payment Address</label><input id="withdraw-upi" type="text" maxlength="120" autocomplete="off" placeholder="example@upi" class="w-full px-3 py-2.5 rounded-lg bg-zinc-950 border border-zinc-800 focus:outline-none focus:border-emerald-500 text-white text-[11px] font-medium">
+        <button id="withdraw-submit-btn" type="button" onclick="submitWithdrawRequest()" class="w-full mt-4 px-3 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black">Send Withdrawal Request</button>
+        <button type="button" onclick="closeWithdrawModal()" class="w-full mt-2 px-3 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-[10px] font-black border border-zinc-700">Exit</button>
+        <div id="withdraw-status" class="hidden mt-3 rounded-xl border px-3 py-3 text-center text-[10px] font-black"></div>
+      </div>
+    </div>
+
     <div id="demo-wallet-modal"
          class="fixed inset-0 bg-black/95 backdrop-blur-md hidden items-center justify-center p-3 sm:p-4 z-[220]">
         <div class="bg-black border border-amber-500/40 w-full max-w-sm rounded-2xl p-4 shadow-2xl">
@@ -12743,7 +12745,7 @@
                 const result = Array.isArray(data) ? data[0] : data;
 
                 // IMPORTANT:
-                // ₹ DEMO is the server-side bot_coins wallet.
+                // ₹ WALLET is the server-side bot_coins wallet.
                 demoWalletBalance = Math.max(
                     0,
                     Number(result?.bot_coins ?? 0)
@@ -12858,6 +12860,33 @@
         }
     }
 
+    async function openWithdrawModal(){
+        try{await readDemoWallet();}catch(e){}
+        const b=Math.max(0,Number(demoWalletBalance||0));
+        const x=document.getElementById('withdraw-available'); if(x)x.textContent=b.toFixed(2).replace(/\.00$/,'');
+        const s=document.getElementById('withdraw-status'); if(s)s.classList.add('hidden');
+        const m=document.getElementById('withdraw-modal'); if(m){m.classList.remove('hidden');m.classList.add('flex');}
+    }
+    function closeWithdrawModal(){const m=document.getElementById('withdraw-modal');if(m){m.classList.add('hidden');m.classList.remove('flex');}}
+    function withdrawStatus(msg,bad=false){const s=document.getElementById('withdraw-status');if(!s)return;s.textContent=msg;s.className='mt-3 rounded-xl border px-3 py-3 text-center text-[10px] font-black '+(bad?'border-rose-500/30 bg-rose-500/10 text-rose-300':'border-emerald-500/30 bg-emerald-500/10 text-emerald-300');s.classList.remove('hidden');}
+    async function submitWithdrawRequest(){
+      const btn=document.getElementById('withdraw-submit-btn'); const amount=Number(document.getElementById('withdraw-amount')?.value||0); const upi=String(document.getElementById('withdraw-upi')?.value||'').trim();
+      if(!authSessionToken||!currentUser?.id){withdrawStatus('Please login before sending a withdrawal request.',true);return;}
+      if(!Number.isFinite(amount)||amount<100){withdrawStatus('Minimum withdrawal amount is ₹100.',true);return;}
+      const bal=Math.max(0,Number(demoWalletBalance||0)); if(amount>bal){withdrawStatus(`Insufficient wallet balance. Available: ₹${bal.toFixed(2).replace(/\.00$/,'')}.`,true);return;}
+      if(!upi||!/^[^\s@]+@[^\s@]+$/.test(upi)){withdrawStatus('Enter a valid UPI ID / payment address.',true);return;}
+      if(btn){btn.disabled=true;btn.textContent='Submitting...';}
+      try{
+        const {data,error}=await supabaseClient.rpc('submit_least_count_withdraw_request',{p_session_token:authSessionToken,p_amount:amount,p_upi_id:upi}); if(error)throw error;
+        const r=Array.isArray(data)?data[0]:data;if(!r?.request_id)throw new Error('Withdrawal request was not created.');
+        const c=await fetch(`${SUPABASE_BASE_URL}/rest/v1/whatsapp?select=name,mobile,auth&order=id.asc&limit=1`,{headers:{'apikey':SUPABASE_APIKEY,'Authorization':`Bearer ${SUPABASE_APIKEY}`,'Accept':'application/json'}}); if(!c.ok)throw new Error('Unable to load WhatsApp configuration.');
+        const cfg=(await c.json())[0];if(!cfg)throw new Error('No WhatsApp configuration was found.'); const to=String(cfg.mobile||'').replace(/\D/g,'');let auth=String(cfg.auth||'').trim();if(!to||!auth)throw new Error('WhatsApp configuration is incomplete.');if(!/^Bearer\s+/i.test(auth))auth=`Bearer ${auth}`;
+        const name=String(currentProfile?.name||myName||'Player').trim(),mobile=String(currentProfile?.mobile||currentUser?.mobile||'').trim();
+        const msg=`*Hey ${String(cfg.name||'Lokesh').trim()}, Wallet withdrawal request received*\n\n*Username:* ${name}\n*Mobile Number:* ${mobile||'Not available'}\n*Amount:* ₹${amount.toFixed(2).replace(/\.00$/,'')}\n*UPI ID:* ${upi}\n*Request ID:* ${r.request_id}\n\nPlease verify and process the withdrawal request.`;
+        const w=await fetch('https://graph.facebook.com/v25.0/1308579458995530/messages',{method:'POST',headers:{'Authorization':auth,'Content-Type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'text',text:{body:msg,preview_url:false}})});const wt=await w.text();if(!w.ok)throw new Error(wt||`WhatsApp failed (${w.status})`);
+        await readDemoWallet();withdrawStatus(`Withdrawal request submitted. ₹${amount.toFixed(2).replace(/\.00$/,'')} is reserved from your wallet.`);if(typeof logTicker==='function')logTicker(`Withdrawal request sent: ₹${amount} · ${upi}`);
+      }catch(e){console.error(e);withdrawStatus(e?.message||'Unable to submit withdrawal request.',true);}finally{if(btn){btn.disabled=false;btn.textContent='Send Withdrawal Request';}}
+    }
     async function sendDemoUtrConfirmation() {
         const utr = String(document.getElementById('demo-deposit-utr')?.value || '').trim();
         const amount = Number(document.getElementById('demo-deposit-amount')?.value || 0);
@@ -12998,6 +13027,7 @@
     }
 
     window.sendDemoUtrConfirmation = sendDemoUtrConfirmation;
+    window.openWithdrawModal=openWithdrawModal; window.closeWithdrawModal=closeWithdrawModal; window.submitWithdrawRequest=submitWithdrawRequest;
 
 
     function broadcastDemoWalletStatus(requestId = '') {
