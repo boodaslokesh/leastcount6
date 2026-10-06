@@ -178,7 +178,7 @@
         <div class="flex items-center space-x-2">
             <div class="flex items-center gap-1.5">
                 <div id="bot-wallet-card"
-                     title="Bot game wallet"
+                     title="Server demo game wallet" style="display:none"
                      class="flex items-center gap-1 bg-zinc-900 border border-indigo-500/30 px-1.5 py-1 rounded-lg">
                     <span class="text-[9px] text-indigo-300 font-bold">BOT</span>
                     <span id="bot-wallet-balance" class="text-[10px] text-indigo-200 font-black tabular-nums">0</span>
@@ -193,7 +193,7 @@
                 <button id="demo-wallet-card"
                         type="button"
                         onclick="openDemoWalletModal()"
-                        title="Demo wallet for local testing only"
+                        title="Server-backed Demo wallet"
                         class="flex items-center gap-1 bg-zinc-900 border border-amber-500/40 hover:border-amber-400 px-1.5 py-1 rounded-lg transition">
                     <span class="text-[9px] text-amber-300 font-bold">₹ DEMO</span>
                     <span id="demo-wallet-balance" class="text-[10px] text-amber-200 font-black tabular-nums">0</span>
@@ -845,6 +845,10 @@
                     Congratulations! The tournament is complete.
                 </p>
 
+                <div id="tournament-winner-payout"
+                     class="hidden rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
+                </div>
+
                 <!-- Final round card values: values only, no card graphics/suits -->
                 <div class="text-left space-y-1 pt-0.5">
                     <div class="text-[8px] uppercase tracking-[0.16em] text-zinc-400 font-black">
@@ -1461,6 +1465,7 @@
         const winnerEl = document.getElementById('tournament-winner-name');
         const cardsEl = document.getElementById('tournament-winner-cards');
         const historyEl = document.getElementById('tournament-winner-round-history');
+        const payoutEl = document.getElementById('tournament-winner-payout');
 
         if (winnerEl) {
             winnerEl.innerText = winnerName || 'Nobody';
@@ -1469,6 +1474,49 @@
         const snapshotPlayers = Array.isArray(roundPlayers) && roundPlayers.length
             ? roundPlayers
             : players;
+
+        // The entry pot is based on everyone who entered THIS game.
+        // Do not use only the final remaining players because eliminated
+        // players already paid their entry amount.
+        const prizeParticipants =
+            Array.isArray(currentGameParticipantsSnapshot) &&
+            currentGameParticipantsSnapshot.length
+                ? currentGameParticipantsSnapshot
+                : snapshotPlayers;
+
+        if (
+            payoutEl &&
+            betMode === 'bet' &&
+            Number(betAmount || 0) > 0 &&
+            winnerName &&
+            winnerName !== 'Nobody'
+        ) {
+            const participantCount = prizeParticipants.filter(player =>
+                player &&
+                player.viewOnly !== true
+            ).length;
+
+            const pot = Math.max(0, participantCount * Number(betAmount || 0));
+            const houseAmount = Math.round(pot * DEMO_HOUSE_PERCENT * 100) / 100;
+            const winnerPrize = Math.round((pot - houseAmount) * 100) / 100;
+
+            payoutEl.classList.remove('hidden');
+            payoutEl.innerHTML = `
+                <div class="text-[9px] uppercase tracking-wider text-zinc-400 font-black">
+                    Demo Prize
+                </div>
+                <div class="text-lg font-black text-emerald-300 mt-0.5">
+                    Winner gets ₹${winnerPrize.toFixed(2).replace(/\.00$/, '')}
+                </div>
+                <div class="text-[9px] text-zinc-400 mt-0.5">
+                    Total pot ₹${pot.toFixed(2).replace(/\.00$/, '')}
+                    · House 5% ₹${houseAmount.toFixed(2).replace(/\.00$/, '')}
+                </div>
+            `;
+        } else if (payoutEl) {
+            payoutEl.classList.add('hidden');
+            payoutEl.innerHTML = '';
+        }
 
         /*
          * FINAL ROUND CARDS
@@ -1624,8 +1672,9 @@
         );
 
         if (!isSoloMode && participants.length < 2) {
+            window.__demoPrevalidatedStart = false;
             logTicker('At least 2 connected players are required to start again.');
-            return;
+            return false;
         }
 
         const hostToken = String(myClientToken || roomHostToken || '');
@@ -2284,13 +2333,10 @@
         // A fresh login always lands in the lobby, never in a previous room header state.
         setHeaderAction(true);
 
-        if (account.bot_coins !== undefined) {
-            botWallet = Number(account.bot_coins || 0);
-            realWallet = Number(account.real_coins || 0);
-            renderWallets();
-        } else {
-            await loadWallets();
-        }
+        // Always load the wallet from the authoritative wallet RPC.
+        // The login RPC may contain older/cached wallet fields, so do not
+        // use account.bot_coins / account.real_coins here.
+        await loadWallets();
 
         refreshPublicRoomsList();
         logTicker(`Welcome, ${currentProfile.name}!`);
@@ -4851,10 +4897,248 @@
     }
 
     // ============================================================
+    // RELIABLE ROOM-WIDE ROUND RESULT DELIVERY
+    // ============================================================
+
+    const processedRoundResultEvents = new Set();
+
+    function makeRoundResultEventId() {
+        return [
+            String(roomCode || '').trim().toUpperCase(),
+            String(roomGameSequence || 1),
+            String(roundCounter || 0),
+            String(Date.now()),
+            Math.random().toString(36).slice(2, 9)
+        ].join(':');
+    }
+
+    async function applyRoundResultForEveryone(data) {
+        const eventRoom = String(data?.roomCode || '').trim().toUpperCase();
+        const currentRoom = String(roomCode || '').trim().toUpperCase();
+
+        if (!eventRoom || !currentRoom || eventRoom !== currentRoom) {
+            return false;
+        }
+
+        const eventId = String(data?.roundResultEventId || '').trim();
+
+        if (eventId && processedRoundResultEvents.has(eventId)) {
+            return true;
+        }
+
+        if (eventId) {
+            processedRoundResultEvents.add(eventId);
+
+            if (processedRoundResultEvents.size > 200) {
+                const first = processedRoundResultEvents.values().next().value;
+                if (first) processedRoundResultEvents.delete(first);
+            }
+        }
+
+        if (Array.isArray(data.players)) {
+            players = data.players;
+        }
+
+        if (Array.isArray(data.gameHistory)) {
+            gameHistory = data.gameHistory;
+        }
+
+        if (data.walletGameId) {
+            walletGameId = String(data.walletGameId);
+        }
+
+        if (data.gameOpponentCount !== undefined) {
+            gameOpponentCount = Math.max(
+                1,
+                Math.trunc(Number(data.gameOpponentCount) || 1)
+            );
+        }
+
+        roundActive = false;
+
+        myIndex = players.findIndex(
+            p =>
+                p &&
+                (
+                    p.id === myId ||
+                    p.clientToken === myClientToken
+                )
+        );
+
+        // If this client was eliminated in this round, settle its own
+        // wallet once. The server-side settlement remains idempotent.
+        try {
+            await settleWalletForEliminatedPlayer(
+                isSoloMode ? 'bot' : 'real'
+            );
+        } catch (error) {
+            console.error('Eliminated-player wallet settlement failed:', error);
+        }
+
+        // IMPORTANT:
+        // Every connected room member executes the same popup path,
+        // regardless of who called SHOW and regardless of who is host.
+        showRoundOverModal(
+            data.resultsData || '',
+            data.callerName || 'Player',
+            data.tournamentWinner || ''
+        );
+
+        renderGameBoard();
+
+        if (data.tournamentWinner) {
+            // UI must never wait for wallet/RPC work. Show the winner popup
+            // first, then perform all financial/database settlement separately.
+            showTournamentWinnerPopup(
+                data.tournamentWinner,
+                data.roomCode,
+                data.players || players,
+                data.callerName || '',
+                data.finalRoundHistory ||
+                    (
+                        Array.isArray(data.gameHistory) &&
+                        data.gameHistory.length
+                            ? data.gameHistory[data.gameHistory.length - 1]
+                            : null
+                    )
+            );
+
+            try {
+                await settleWalletForCompletedGame(
+                    data.tournamentWinner,
+                    gameOpponentCount,
+                    isSoloMode ? 'bot' : 'real'
+                );
+            } catch (error) {
+                console.error('Final winner wallet settlement failed:', error);
+            }
+
+            // Winner demo payout is also independent from popup rendering.
+            if (typeof window.creditLeastCountDemoWinner === 'function' && betMode === 'bet' && Number(betAmount || 0) > 0) {
+                try {
+                    const participantCount = (Array.isArray(currentGameParticipantsSnapshot) && currentGameParticipantsSnapshot.length
+                        ? currentGameParticipantsSnapshot
+                        : (Array.isArray(data.players) ? data.players : players))
+                        .filter(p => p && p.viewOnly !== true).length;
+                    await window.creditLeastCountDemoWinner(
+                        window.getLeastCountDemoGameKey(),
+                        data.tournamentWinner,
+                        participantCount,
+                        Number(betAmount || 0)
+                    );
+                } catch (error) {
+                    console.error('Final demo winner payout failed:', error);
+                }
+            }
+
+            // Only the host writes the room bet ledger. This is NOT dependent
+            // on whether the popup was displayed successfully.
+            if (isHost) {
+                await finalizeCompletedRoomGameOnce(data.tournamentWinner);
+            }
+        }
+
+        saveLocalRoomSession();
+        return true;
+    }
+
+    // ============================================================
     // INCOMING NETWORK DATA
     // ============================================================
 
     async function handleIncomingNetworkData(data) {
+
+        // ROUND_RESULT_ALL must be handled by EVERY browser before the
+        // host-only branch below. The old structure returned early for the
+        // host, which made result/winner delivery inconsistent.
+        if (data && data.type === 'ROUND_RESULT_ALL') {
+            await applyRoundResultForEveryone(data);
+            return;
+        }
+
+        if (data && data.type === 'TOURNAMENT_WINNER') {
+            const eventRoom = String(data.roomCode || '').trim().toUpperCase();
+            const currentRoom = String(roomCode || '').trim().toUpperCase();
+
+            if (!eventRoom || eventRoom !== currentRoom) {
+                return;
+            }
+
+            if (Array.isArray(data.players) && data.players.length) {
+                players = data.players;
+                myIndex = players.findIndex(
+                    p =>
+                        p &&
+                        (
+                            p.id === myId ||
+                            p.clientToken === myClientToken
+                        )
+                );
+            }
+
+            if (Array.isArray(data.gameHistory)) {
+                gameHistory = data.gameHistory;
+            }
+
+            if (data.walletGameId) {
+                walletGameId = data.walletGameId;
+            }
+
+            if (data.gameOpponentCount !== undefined) {
+                gameOpponentCount = Math.max(
+                    1,
+                    Math.trunc(Number(data.gameOpponentCount) || 1)
+                );
+            }
+
+            // Do not block the winner popup on any wallet/database RPC.
+            showTournamentWinnerPopup(
+                data.winnerName,
+                data.roomCode,
+                data.players || players,
+                data.callerName || '',
+                data.finalRoundHistory ||
+                    (
+                        Array.isArray(data.gameHistory) &&
+                        data.gameHistory.length
+                            ? data.gameHistory[data.gameHistory.length - 1]
+                            : null
+                    )
+            );
+
+            try {
+                await settleWalletForCompletedGame(
+                    data.winnerName,
+                    gameOpponentCount,
+                    isSoloMode ? 'bot' : 'real'
+                );
+            } catch (error) {
+                console.error('Tournament winner settlement failed:', error);
+            }
+
+            if (typeof window.creditLeastCountDemoWinner === 'function' && betMode === 'bet' && Number(betAmount || 0) > 0) {
+                try {
+                    const participantCount = (Array.isArray(currentGameParticipantsSnapshot) && currentGameParticipantsSnapshot.length
+                        ? currentGameParticipantsSnapshot
+                        : (Array.isArray(data.players) ? data.players : players))
+                        .filter(p => p && p.viewOnly !== true).length;
+                    await window.creditLeastCountDemoWinner(
+                        window.getLeastCountDemoGameKey(),
+                        data.winnerName,
+                        participantCount,
+                        Number(betAmount || 0)
+                    );
+                } catch (error) {
+                    console.error('Tournament demo winner payout failed:', error);
+                }
+            }
+
+            if (isHost) {
+                await finalizeCompletedRoomGameOnce(data.winnerName);
+            }
+
+            return;
+        }
 
         // Save shortly after processing starts; incoming authoritative state
         // is applied synchronously before any awaited wallet work.
@@ -6584,55 +6868,8 @@
             // ----------------------------------------------------
 
             case 'TOURNAMENT_WINNER':
-
-                if (data.walletGameId)
-                    walletGameId = data.walletGameId;
-
-                if (data.gameOpponentCount !== undefined)
-                    gameOpponentCount =
-                        Math.max(
-                            1,
-                            Math.trunc(Number(data.gameOpponentCount) || 1)
-                        );
-
-                if (Array.isArray(data.roomCompletedGames)) {
-                    roomCompletedGames = data.roomCompletedGames;
-                    completedRoomGameIds = new Set(roomCompletedGames.map(game => String(game.gameId || '')));
-                }
-                if (data.roomGameSequence !== undefined) {
-                    roomGameSequence = Number(data.roomGameSequence) || roomCompletedGames.length || 0;
-                }
-
-                if (Array.isArray(data.players) && data.players.length) {
-                    players = data.players;
-                    myIndex = players.findIndex(
-                        p =>
-                            p.id === myId ||
-                            p.clientToken === myClientToken
-                    );
-                }
-
-                await settleWalletForCompletedGame(
-                    data.winnerName,
-                    gameOpponentCount,
-                    isSoloMode ? 'bot' : 'real'
-                );
-
-                if (Array.isArray(data.gameHistory)) {
-                    gameHistory = data.gameHistory;
-                }
-
-                showTournamentWinnerPopup(
-                    data.winnerName,
-                    data.roomCode,
-                    data.players || players,
-                    data.callerName || '',
-                    data.finalRoundHistory ||
-                        (Array.isArray(data.gameHistory) && data.gameHistory.length
-                            ? data.gameHistory[data.gameHistory.length - 1]
-                            : null)
-                );
-
+                // Handled before the host/guest split near the top of
+                // handleIncomingNetworkData().
                 break;
 
             // ----------------------------------------------------
@@ -6640,70 +6877,19 @@
             // ----------------------------------------------------
 
             case 'ROUND_OVER':
+                // Backward compatibility for an older browser still sending
+                // ROUND_OVER. Normalize it into the new room-wide handler.
+                data.type = 'ROUND_RESULT_ALL';
+                data.roundResultEventId =
+                    data.roundResultEventId ||
+                    [
+                        String(data.roomCode || '').trim().toUpperCase(),
+                        String(data.callerName || ''),
+                        String(data.gameHistory?.length || 0),
+                        String(Date.now())
+                    ].join(':');
 
-                if (
-                    String(data.roomCode || '').trim().toUpperCase() !==
-                    String(roomCode || '').trim().toUpperCase()
-                ) {
-                    break;
-                }
-
-                players =
-                    data.players ||
-                    players;
-
-                gameHistory =
-                    data.gameHistory ||
-                    gameHistory;
-
-                if (data.walletGameId)
-                    walletGameId = data.walletGameId;
-
-                if (data.gameOpponentCount !== undefined)
-                    gameOpponentCount =
-                        Math.max(
-                            1,
-                            Math.trunc(Number(data.gameOpponentCount) || 1)
-                        );
-
-                roundActive = false;
-
-                myIndex =
-                    players.findIndex(
-                        p =>
-                            p.id ===
-                            myId ||
-                            p.clientToken ===
-                            myClientToken
-                    );
-
-                await settleWalletForEliminatedPlayer(
-                    isSoloMode ? 'bot' : 'real'
-                );
-
-                showRoundOverModal(
-                    data.resultsData,
-                    data.callerName,
-                    data.tournamentWinner || ''
-                );
-
-                renderGameBoard();
-
-                if (data.tournamentWinner) {
-                    await settleWalletForCompletedGame(
-                        data.tournamentWinner,
-                        gameOpponentCount,
-                        isSoloMode ? 'bot' : 'real'
-                    );
-
-                    showTournamentWinnerPopup(
-                        data.tournamentWinner,
-                        data.roomCode,
-                        data.players || players,
-                        data.callerName || ''
-                    );
-                }
-
+                await applyRoundResultForEveryone(data);
                 break;
         }
     }
@@ -6930,6 +7116,13 @@
 
             gameOpponentCount:
                 gameOpponentCount,
+
+            // Explicitly send the DEMO bet configuration to every player.
+            betMode:
+                String(betMode || 'free'),
+
+            betAmount:
+                Number(betAmount || 0),
 
             gameHistory:
                 gameHistory
@@ -8091,24 +8284,36 @@
                 ? remainingPlayers[0].name
                 : '';
 
-        // Settle the wallet immediately when the game has a final winner.
-        // This works for both solo/bot games and online multiplayer.
+        // A final wallet RPC must NEVER prevent the round result from being
+        // broadcast. Do it safely in the background after the game result is
+        // constructed.
         if (roundWinner) {
-            await settleWalletForCompletedGame(
-                roundWinner,
-                gameOpponentCount,
-                isSoloMode ? 'bot' : 'real'
-            );
+            try {
+                await settleWalletForCompletedGame(
+                    roundWinner,
+                    gameOpponentCount,
+                    isSoloMode ? 'bot' : 'real'
+                );
+            } catch (error) {
+                console.error('Final round wallet settlement failed:', error);
+            }
         }
 
         // Persist the complete game history after every completed round.
-        // Only the host writes, and the same host + game code updates the existing row.
-        syncGameHistoryToSupabase(roundWinner);
+        // Never allow a database-history failure to stop realtime result delivery.
+        try {
+            await syncGameHistoryToSupabase(roundWinner);
+        } catch (error) {
+            console.error('Round game-history save failed:', error);
+        }
 
         let payload = {
 
             type:
-                'ROUND_OVER',
+                'ROUND_RESULT_ALL',
+
+            roundResultEventId:
+                makeRoundResultEventId(),
 
             roomCode:
                 roomCode,
@@ -8125,6 +8330,11 @@
             gameHistory:
                 gameHistory,
 
+            finalRoundHistory:
+                gameHistory.length
+                    ? gameHistory[gameHistory.length - 1]
+                    : null,
+
             // If only one eligible player remains, this round also ended
             // the tournament. Send the winner in the same reliable packet.
             tournamentWinner:
@@ -8137,38 +8347,47 @@
                 gameOpponentCount
         };
 
-        showRoundOverModal(
-            resultsText,
-            caller.name,
-            roundWinner
-        );
+        // Apply locally through the SAME path used by every remote player.
+        // This guarantees that host/caller/other players see identical UI.
+        await applyRoundResultForEveryone(payload);
 
-        renderGameBoard();
-
-        if (roundWinner) {
-            // Host/solo gets the popup immediately. Remote clients get it
-            // from the same ROUND_OVER broadcast below.
-            showTournamentWinnerPopup(
-                roundWinner,
-                roomCode,
-                players,
-                caller.name,
-                gameHistory.length
-                    ? gameHistory[gameHistory.length - 1]
-                    : null
-            );
+        // The room ledger is finalized directly from the game result, not from
+        // the popup callback. Therefore SHOW -> final winner always updates
+        // bet history even if the popup is delayed/duplicated.
+        if (roundWinner && isHost) {
+            await finalizeCompletedRoomGameOnce(roundWinner);
         }
 
-        if (
-            isHost &&
-            !isSoloMode
-        ) {
+        if (!isSoloMode) {
+            // Host is the authoritative round processor. Broadcast the exact
+            // same immutable result packet to every connected browser.
+            //
+            // If SHOW was called by a guest, the guest sent CALL_SHOW to the
+            // host and the host arrives here after calculating the round.
+            await sendRealtimeMessage(payload);
 
-            // Wait until Supabase accepts the broadcast before this flow can
-            // tear down the room channel.
-            await sendRealtimeMessage(
-                payload
-            );
+            // Safety-net winner event:
+            // If this round eliminated the host or any other player and only
+            // one playable player remains, publish the final winner separately
+            // as well. showTournamentWinnerPopup is idempotent per room, so a
+            // client that already displayed it will not show a duplicate.
+            if (roundWinner) {
+                await sendRealtimeMessage({
+                    type: 'TOURNAMENT_WINNER',
+                    roomCode,
+                    winnerName: roundWinner,
+                    players,
+                    callerName: caller.name,
+                    finalRoundHistory:
+                        gameHistory.length
+                            ? gameHistory[gameHistory.length - 1]
+                            : null,
+                    gameHistory,
+                    walletGameId,
+                    gameOpponentCount,
+                    roundResultEventId: payload.roundResultEventId
+                });
+            }
         }
     }
 
@@ -8178,10 +8397,22 @@
         tournamentWinnerName = ''
     ) {
 
+        const normalizedResultText = String(htmlContent || '').toUpperCase();
+
+        let resultLabel = 'SHOW RESULT';
+
+        if (normalizedResultText.includes('FAILED SHOW')) {
+            resultLabel = 'FAILED SHOW';
+        } else if (normalizedResultText.includes('MATCHED SHOW')) {
+            resultLabel = 'MATCHED SHOW';
+        } else if (normalizedResultText.includes('GOOD SHOW')) {
+            resultLabel = 'GOOD SHOW';
+        }
+
         document.getElementById(
             'round-over-title'
         ).innerText =
-            `${callerName.toUpperCase()} CALLED SHOW!`;
+            `${callerName.toUpperCase()} - ${resultLabel}`;
 
         document.getElementById(
             'round-over-content'
@@ -9677,7 +9908,15 @@
                 );
                 if (error) throw error;
 
-                const rows = Array.isArray(data) ? data : [];
+                let rows = data;
+                if (typeof rows === 'string') {
+                    try { rows = JSON.parse(rows); } catch (e) {}
+                }
+                if (rows && !Array.isArray(rows) && typeof rows === 'object') {
+                    rows = Array.isArray(rows.rows) ? rows.rows :
+                           Array.isArray(rows.data) ? rows.data : [rows];
+                }
+                rows = Array.isArray(rows) ? rows.filter(Boolean) : [];
                 const totalUsers = rows.length;
                 const totalBotGames = rows.reduce((sum, r) => sum + Number(r.bot_games_played || 0), 0);
                 const totalRealGames = rows.reduce((sum, r) => sum + Number(r.real_games_played || 0), 0);
@@ -11628,6 +11867,46 @@
         return String(walletGameId || `${roomCode}-game-${roomGameSequence || 1}`);
     }
 
+    // Final game completion is intentionally independent from the winner popup.
+    // The popup is UI only; database/bet settlement must still happen if a popup
+    // rendering path fails or a realtime packet is duplicated.
+    const completedGameFinalizationInFlight = new Map();
+
+    async function finalizeCompletedRoomGameOnce(finalWinner) {
+        const winner = String(finalWinner || '').trim();
+        if (!isHost || !roomCode || !winner || winner === 'Nobody') return false;
+
+        const gameId = getCurrentGameIdentity();
+        if (completedRoomGameIds.has(gameId)) return true;
+        if (completedGameFinalizationInFlight.has(gameId)) {
+            return completedGameFinalizationInFlight.get(gameId);
+        }
+
+        const promise = (async () => {
+            try {
+                await recordCompletedRoomGame(winner);
+                renderBetDisplays();
+                return true;
+            } catch (error) {
+                console.error('Completed game/bet history finalization failed:', error);
+                logTicker('Game finished, but bet history save failed. Retrying...');
+                try {
+                    await syncGameHistoryToSupabase(winner);
+                } catch (retryError) {
+                    console.error('Final game history retry failed:', retryError);
+                }
+                return false;
+            }
+        })();
+
+        completedGameFinalizationInFlight.set(gameId, promise);
+        try {
+            return await promise;
+        } finally {
+            completedGameFinalizationInFlight.delete(gameId);
+        }
+    }
+
     async function recordCompletedRoomGame(finalWinner) {
         if (!isHost || !roomCode || !finalWinner || finalWinner === 'Nobody') return false;
 
@@ -11918,6 +12197,29 @@
     const _betBaseCreateRoom = createRoom;
     createRoom = async function() {
         readBetSettingsFromLobby();
+
+        // A BET room must not even be created if the host cannot afford its
+        // own entry amount. This check happens before roomCode is generated.
+        if (betMode === 'bet' && Number(betAmount || 0) > 0) {
+            try {
+                const available = Number(await window.getLeastCountDemoBalance());
+                const required = Number(betAmount || 0);
+
+                if (available < required) {
+                    alert(
+                        `You don't have enough DEMO balance to create this bet room.\n\n` +
+                        `Available: ₹${available.toFixed(2).replace(/\.00$/, '')}\n` +
+                        `Required: ₹${required.toFixed(2).replace(/\.00$/, '')}`
+                    );
+                    return false;
+                }
+            } catch (error) {
+                console.error('Unable to verify DEMO balance before room creation:', error);
+                alert('Unable to verify your DEMO balance. Please refresh your wallet and try again.');
+                return false;
+            }
+        }
+
         betHistoryLedger = [];
         roomCompletedGames = [];
         completedRoomGameIds = new Set();
@@ -12011,9 +12313,36 @@
         if (!isHost && !isSoloMode) return;
 
         const participants = getCurrentRoomParticipants();
+
+        // Check player count BEFORE doing any wallet prevalidation.
         if (!isSoloMode && participants.length < 2) {
+            window.__demoPrevalidatedStart = false;
             logTicker('At least 2 connected players are required to start again.');
-            return;
+            return false;
+        }
+
+        // IMPORTANT: Do this BEFORE rebuilding `players` and switching from
+        // the winner/waiting screen to the game screen. If a player has only
+        // ₹1 and the next game needs ₹10, the host must see the popup here.
+        // The room remains on the current screen until the host removes that
+        // player (or cancels the start).
+        if (!isSoloMode && betMode === 'bet' && Number(betAmount || 0) > 0) {
+            window.__demoPrevalidatedStart = false;
+
+            const allowed = typeof window.validateDemoBetBeforeStart === 'function'
+                ? await window.validateDemoBetBeforeStart(false)
+                : true;
+
+            if (!allowed) {
+                if (typeof logTicker === 'function') {
+                    logTicker('Game start cancelled: one or more players do not have enough DEMO balance.');
+                }
+                return false;
+            }
+
+            // Validation succeeded. startHostGame will charge the host after
+            // the new game state has been prepared.
+            window.__demoPrevalidatedStart = true;
         }
 
         // Ensure the just-completed game has already been persisted before
@@ -12112,17 +12441,30 @@
 
     // Archive a completed game exactly once before showing the winner popup.
     const _betBaseShowTournamentWinnerPopup = showTournamentWinnerPopup;
-    showTournamentWinnerPopup = function(winner, eventRoomCode = '', roundPlayers = null, callerName = '') {
-        // The original final-winner popup is invoked before the original
-        // executeShowRound returns, so archive the game here. Bet settlement
-        // is calculated ONCE for the completed game, not once per round.
-        const shown = _betBaseShowTournamentWinnerPopup(winner, eventRoomCode, roundPlayers, callerName);
+    showTournamentWinnerPopup = function(
+        winner,
+        eventRoomCode = '',
+        roundPlayers = null,
+        callerName = '',
+        finalRoundHistory = null
+    ) {
+        // Preserve ALL winner-popup arguments, including the final round
+        // history. Earlier wrapper code accidentally dropped argument #5.
+        const shown = _betBaseShowTournamentWinnerPopup(
+            winner,
+            eventRoomCode,
+            roundPlayers,
+            callerName,
+            finalRoundHistory
+        );
         if (shown && isHost && winner && winner !== 'Nobody') {
-            recordCompletedRoomGame(winner).then(() => {
+            // Fallback only. Normal finalization happens from the authoritative
+            // ROUND_RESULT_ALL event, before/independent of this UI callback.
+            finalizeCompletedRoomGameOnce(winner).then(() => {
                 if (betMode === 'bet' && Number(betAmount) > 0) {
                     setTimeout(() => openBetFinalSettlementModal(winner), 120);
                 }
-            }).catch(error => console.error('Room game archive failed:', error));
+            }).catch(error => console.error('Room game archive fallback failed:', error));
         }
         return shown;
     };
@@ -12141,7 +12483,7 @@
         if (betMode === 'bet' && Number(betAmount) > 0) {
             extra = `
                 <div class="mt-3 pt-3 border-t border-emerald-500/20 text-center">
-                    <div class="text-emerald-300 font-black mb-1.5">🧪 Demo Bet · ₹${Number(betAmount)} per completed game</div>
+                    <div class="text-emerald-300 font-black mb-1.5">🧪 Demo Bet · ₹${Number(betAmount)} entry · 5% house / 95% winner</div>
                     <button type="button" onclick="openBetHistoryModal()" class="text-[10px] text-emerald-300 hover:text-emerald-200 underline font-black">View complete Bet History for this room</button>
                 </div>`;
         }
@@ -12165,6 +12507,10 @@
         }));
 
         const result = await _betBaseStartHostGame();
+        // Start Game is a waiting-room host control only. Once gameplay starts,
+        // never leave the button visible. Guests never receive it.
+        const hostControls = document.getElementById('host-controls');
+        if (hostControls) hostControls.classList.add('hidden');
         renderBetDisplays();
         try {
             saveLocalRoomSession();
@@ -12228,9 +12574,10 @@
 
 
     <!-- ============================================================
-         DEMO WALLET — LOCAL TESTING ONLY
-         This wallet contains simulated credits. It does not process
-         UPI, deposits, withdrawals, UTRs, or real money.
+         DEMO WALLET — SERVER BACKED
+         The ₹ DEMO balance is stored in least_count_players.bot_coins.
+         Admin-approved deposits and demo-game transactions use the
+         same server-side demo wallet.
          ============================================================ -->
     <div id="demo-wallet-modal"
          class="fixed inset-0 bg-black/95 backdrop-blur-md hidden items-center justify-center p-3 sm:p-4 z-[220]">
@@ -12291,6 +12638,12 @@
                     Send Transaction Confirmation
                 </button>
 
+                <button type="button"
+                        onclick="closeDemoWalletModal()"
+                        class="w-full mt-2 px-3 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-[10px] font-black border border-zinc-700">
+                    Exit
+                </button>
+
                 <div id="demo-utr-status"
                      class="hidden mt-2 rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-2 text-[8px] text-zinc-400"></div>
 
@@ -12307,7 +12660,7 @@
                 <div class="text-2xl">⚠️</div>
                 <h3 class="text-lg font-black text-rose-300 mt-1">Insufficient Demo Balance</h3>
                 <p class="text-[10px] text-zinc-400 mt-1">
-                    The demo bet cannot start until every participating player has enough demo credits.
+                    The game cannot start because one or more players do not have enough DEMO balance. Remove the player(s) shown below or cancel the start.
                 </p>
             </div>
 
@@ -12334,8 +12687,8 @@
    DEMO RUPEE WALLET + DEMO BET VALIDATION
    ----------------------------------------------------------------
    This is intentionally separate from the existing card-game logic.
-   It uses browser-local simulated credits only.
-   No UPI/payment/UTR/cash functionality is implemented here.
+   The DEMO balance is server-backed in public.least_count_players.bot_coins.
+   Deposit approval, demo bets and winner payouts use this same balance.
    ================================================================ */
 (function () {
     'use strict';
@@ -12343,7 +12696,7 @@
     const DEMO_WALLET_KEY_PREFIX = 'leastCountDemoWalletV1:';
     const DEMO_GAME_CHARGE_KEY = 'leastCountDemoChargedGamesV1:';
     const DEMO_GAME_WIN_KEY = 'leastCountDemoWonGamesV1:';
-    const DEMO_FEE = 2;
+    const DEMO_HOUSE_PERCENT = 0.05; // 5% house fee; winner receives 95%
 
     let demoWalletBalance = 0;
     let demoWalletLedger = [];
@@ -12375,33 +12728,68 @@
         return DEMO_WALLET_KEY_PREFIX + getDemoWalletIdentity();
     }
 
-    function readDemoWallet() {
+    async function readDemoWallet() {
         try {
-            const raw = localStorage.getItem(getDemoWalletStorageKey());
-            const data = raw ? JSON.parse(raw) : {};
-            demoWalletBalance = Math.max(0, Number(data.balance || 0));
-            demoWalletLedger = Array.isArray(data.ledger) ? data.ledger : [];
+            if (!authSessionToken || !currentUser?.id) {
+                demoWalletBalance = 0;
+            } else {
+                const { data, error } = await supabaseClient.rpc(
+                    'get_least_count_wallet',
+                    { p_session_token: authSessionToken }
+                );
+
+                if (error) throw error;
+
+                const result = Array.isArray(data) ? data[0] : data;
+
+                // IMPORTANT:
+                // ₹ DEMO is the server-side bot_coins wallet.
+                demoWalletBalance = Math.max(
+                    0,
+                    Number(result?.bot_coins ?? 0)
+                );
+            }
+
+            // Keep only the UI ledger locally. The actual balance is
+            // authoritative in Supabase and is never loaded from localStorage.
+            try {
+                const raw = localStorage.getItem(getDemoWalletStorageKey());
+                const data = raw ? JSON.parse(raw) : {};
+                demoWalletLedger = Array.isArray(data.ledger) ? data.ledger : [];
+            } catch (e) {
+                demoWalletLedger = [];
+            }
         } catch (e) {
+            console.error('Demo wallet load failed:', e);
             demoWalletBalance = 0;
-            demoWalletLedger = [];
+            try {
+                const raw = localStorage.getItem(getDemoWalletStorageKey());
+                const data = raw ? JSON.parse(raw) : {};
+                demoWalletLedger = Array.isArray(data.ledger) ? data.ledger : [];
+            } catch (_) {
+                demoWalletLedger = [];
+            }
         }
+
         demoWalletReady = true;
         renderDemoWallet();
         broadcastDemoWalletStatus();
+        return demoWalletBalance;
     }
 
     function saveDemoWallet() {
+        // Balance is stored in Supabase. Only the optional local display
+        // ledger is cached here.
         try {
             localStorage.setItem(
                 getDemoWalletStorageKey(),
                 JSON.stringify({
-                    balance: Number(demoWalletBalance || 0),
                     ledger: demoWalletLedger.slice(-100),
                     updatedAt: new Date().toISOString()
                 })
             );
         } catch (e) {
-            console.warn('Demo wallet local save failed:', e);
+            console.warn('Demo wallet local ledger save failed:', e);
         }
         renderDemoWallet();
     }
@@ -12437,8 +12825,8 @@
             : '<div class="text-[9px] text-zinc-600 italic text-center py-3">No demo transactions yet.</div>';
     }
 
-    function openDemoWalletModal() {
-        readDemoWallet();
+    async function openDemoWalletModal() {
+        await readDemoWallet();
         const modal = document.getElementById('demo-wallet-modal');
         if (modal) {
             modal.classList.remove('hidden');
@@ -12470,88 +12858,149 @@
         }
     }
 
-    function sendDemoUtrConfirmation() {
-        const utr = String(
-            document.getElementById('demo-deposit-utr')?.value || ''
-        ).trim();
-
-        const amount = Number(
-            document.getElementById('demo-deposit-amount')?.value || 0
-        );
-
-        const username = String(
-            myName ||
-            currentProfile?.name ||
-            currentUser?.user_metadata?.name ||
-            'Player'
-        ).trim();
-
-        if (!utr) {
-            alert('Enter the UTR / transaction number.');
-            return;
-        }
-
-        if (!Number.isFinite(amount) || amount <= 0) {
-            alert('Enter a valid transaction amount.');
-            return;
-        }
-
-        /*
-         * SAFE DEMO BEHAVIOUR:
-         * The browser does not call WhatsApp Cloud API and does not contain
-         * a WhatsApp access token. This creates a local notification preview
-         * using the exact short message format requested.
-         */
-        const notificationText =
-            `*Hey Lokesh, ${username} has sent UTR transaction number: ${utr}, please confirm*`;
-
+    async function sendDemoUtrConfirmation() {
+        const utr = String(document.getElementById('demo-deposit-utr')?.value || '').trim();
+        const amount = Number(document.getElementById('demo-deposit-amount')?.value || 0);
+        const username = String(currentProfile?.name || myName || currentUser?.name || 'Player').trim();
+        const userMobile = String(currentProfile?.mobile || currentUser?.mobile || '').trim();
+        const status = document.getElementById('demo-utr-status');
         const preview = document.getElementById('demo-whatsapp-preview');
         const previewText = document.getElementById('demo-whatsapp-preview-text');
-        const status = document.getElementById('demo-utr-status');
+        const button = document.querySelector('button[onclick="sendDemoUtrConfirmation()"]');
+        const originalButtonText = button ? button.textContent : 'Send Transaction Confirmation';
 
-        if (previewText) previewText.textContent = notificationText;
-        if (preview) preview.classList.remove('hidden');
+        if (!utr) { alert('Enter the UTR / transaction number.'); return; }
+        if (!Number.isFinite(amount) || amount <= 0) { alert('Enter a valid transaction amount.'); return; }
+        if (!authSessionToken || !currentUser?.id) { alert('Please login before submitting a deposit request.'); return; }
 
-        if (status) {
-            status.textContent =
-                `Test confirmation submitted · ${utr} · ₹${amount}`;
-            status.classList.remove('hidden');
+        if (button) {
+            button.disabled = true;
+            button.textContent = 'Sending...';
+            button.classList.add('opacity-60', 'cursor-not-allowed');
         }
+        if (status) status.classList.add('hidden');
+        if (preview) preview.classList.add('hidden');
 
         try {
-            const raw = localStorage.getItem(
-                'leastCountDemoDepositRequestsV1:' + getDemoWalletIdentity()
+            // 1) Persist the request first. This is the authoritative record.
+            const { data, error } = await supabaseClient.rpc(
+                'submit_least_count_deposit_request',
+                {
+                    p_session_token: authSessionToken,
+                    p_utr: utr,
+                    p_amount: amount,
+                    p_mobile: userMobile,
+                    p_upi_id: 'boodaslokesh@okhdfcbank'
+                }
             );
-            const requests = raw ? JSON.parse(raw) : [];
+            if (error) throw error;
 
-            requests.push({
-                username,
-                utr,
-                amount,
-                upiId: 'boodaslokesh@okhdfcbank',
-                notificationText,
-                status: 'pending-demo-verification',
-                createdAt: new Date().toISOString()
-            });
+            const result = Array.isArray(data) ? data[0] : data;
+            if (!result?.request_id) throw new Error('Deposit request was not created.');
 
-            localStorage.setItem(
-                'leastCountDemoDepositRequestsV1:' + getDemoWalletIdentity(),
-                JSON.stringify(requests.slice(-100))
+            // 2) Send the transaction notification to the configured WhatsApp recipient.
+            const configResponse = await fetch(
+                `${SUPABASE_BASE_URL}/rest/v1/whatsapp?select=name,mobile,auth&order=id.asc&limit=1`,
+                {
+                    method: 'GET',
+                    headers: {
+                        'apikey': SUPABASE_APIKEY,
+                        'Authorization': `Bearer ${SUPABASE_APIKEY}`,
+                        'Accept': 'application/json'
+                    }
+                }
             );
-        } catch (e) {}
+            if (!configResponse.ok) {
+                throw new Error(`Unable to load WhatsApp configuration (${configResponse.status}).`);
+            }
 
-        const utrEl = document.getElementById('demo-deposit-utr');
-        const amountEl = document.getElementById('demo-deposit-amount');
-        if (utrEl) utrEl.value = '';
-        if (amountEl) amountEl.value = '';
+            const configRows = await configResponse.json();
+            const whatsappConfig = Array.isArray(configRows) ? configRows[0] : null;
+            if (!whatsappConfig) throw new Error('No WhatsApp configuration was found in Supabase.');
 
-        if (typeof logTicker === 'function') {
-            logTicker(`Demo UTR confirmation submitted: ${utr}`);
+            const recipientName = String(whatsappConfig.name || 'Lokesh').trim();
+            const recipientMobile = String(whatsappConfig.mobile || '').replace(/\D/g, '');
+            let whatsappAuth = String(whatsappConfig.auth || '').trim();
+            if (!recipientMobile) throw new Error('WhatsApp recipient mobile number is missing.');
+            if (!whatsappAuth) throw new Error('WhatsApp access token is missing.');
+            if (!/^Bearer\s+/i.test(whatsappAuth)) whatsappAuth = `Bearer ${whatsappAuth}`;
+
+            const notificationText =
+                `*Hey ${recipientName}, Deposit transaction confirmation received*\n\n` +
+                `*Username:* ${username}\n` +
+                `*Mobile Number:* ${userMobile || 'Not available'}\n` +
+                `*Amount:* ₹${amount.toFixed(2).replace(/\.00$/, '')}\n` +
+                `*UTR / Transaction Number:* ${utr}\n` +
+                `*Request ID:* ${result.request_id}\n\n` +
+                `Please verify the transaction and update the wallet.`;
+
+            if (previewText) previewText.textContent = notificationText;
+
+            const whatsappResponse = await fetch(
+                'https://graph.facebook.com/v25.0/1308579458995530/messages',
+                {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': whatsappAuth,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        messaging_product: 'whatsapp',
+                        to: recipientMobile,
+                        type: 'text',
+                        text: { body: notificationText, preview_url: false }
+                    })
+                }
+            );
+
+            const responseText = await whatsappResponse.text();
+            let whatsappResult = {};
+            try { whatsappResult = responseText ? JSON.parse(responseText) : {}; } catch (e) {}
+
+            if (!whatsappResponse.ok) {
+                const graphMessage = whatsappResult?.error?.message || whatsappResult?.error?.error_user_msg || responseText || `HTTP ${whatsappResponse.status}`;
+                throw new Error(`WhatsApp notification failed: ${graphMessage}`);
+            }
+
+            if (preview) preview.classList.remove('hidden');
+            if (status) {
+                status.textContent = 'Your request is successfully submitted. Amount is added into your ewallet soon.';
+                status.className = 'mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-3 text-center text-[11px] font-black text-emerald-300';
+                status.classList.remove('hidden');
+            }
+
+            try {
+                const key = 'leastCountDepositRequestPreviewV2:' + getDemoWalletIdentity();
+                const raw = localStorage.getItem(key);
+                const requests = raw ? JSON.parse(raw) : [];
+                requests.push({ requestId: String(result.request_id), username, mobile: userMobile, utr, amount, status: 'pending', createdAt: new Date().toISOString(), whatsappMessageId: whatsappResult?.messages?.[0]?.id || '' });
+                localStorage.setItem(key, JSON.stringify(requests.slice(-100)));
+            } catch (e) {}
+
+            document.getElementById('demo-deposit-utr').value = '';
+            document.getElementById('demo-deposit-amount').value = '';
+            if (typeof logTicker === 'function') logTicker(`Deposit transaction confirmation sent: ${utr}`);
+        } catch (error) {
+            console.error('Deposit confirmation failed:', error);
+            if (status) {
+                status.textContent = `Unable to send transaction confirmation: ${error?.message || 'Please try again.'}`;
+                status.className = 'mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-3 text-center text-[11px] font-black text-rose-300';
+                status.classList.remove('hidden');
+            }
+            alert(error?.message || 'Unable to send the transaction confirmation. Please try again.');
+        } finally {
+            if (button) {
+                button.disabled = false;
+                button.textContent = originalButtonText;
+                button.classList.remove('opacity-60', 'cursor-not-allowed');
+            }
         }
     }
 
+    window.sendDemoUtrConfirmation = sendDemoUtrConfirmation;
 
-    function broadcastDemoWalletStatus() {
+
+    function broadcastDemoWalletStatus(requestId = '') {
         if (!demoWalletReady || !roomCode || typeof sendRealtimeMessage !== 'function') return;
 
         try {
@@ -12560,7 +13009,8 @@
                 roomCode: String(roomCode || ''),
                 clientToken: String(myClientToken || ''),
                 playerName: String(myName || 'Player'),
-                balance: Number(demoWalletBalance || 0)
+                balance: Number(demoWalletBalance || 0),
+                requestId: String(requestId || '')
             });
         } catch (e) {}
     }
@@ -12589,18 +13039,39 @@
         } catch (e) {}
     }
 
-    function chargeLocalDemoBet(gameKey, amount) {
+    async function chargeLocalDemoBet(gameKey, amount) {
         const charged = readSet(DEMO_GAME_CHARGE_KEY + getDemoWalletIdentity());
         if (charged.has(gameKey)) return true;
 
         const bet = Number(amount || 0);
         if (bet <= 0) return true;
 
-        readDemoWallet();
+        await readDemoWallet();
 
         if (demoWalletBalance < bet) return false;
 
-        demoWalletBalance -= bet;
+        const { data, error } = await supabaseClient.rpc(
+            'adjust_least_count_demo_wallet',
+            {
+                p_session_token: authSessionToken,
+                p_reference: 'DEMO_BET:' + String(gameKey),
+                p_amount: -Math.abs(bet),
+                p_description: `Demo bet placed · ₹${bet}`,
+                p_transaction_type: 'game_fee'
+            }
+        );
+
+        if (error) {
+            console.error('Demo bet wallet charge failed:', error);
+            return false;
+        }
+
+        const result = Array.isArray(data) ? data[0] : data;
+        demoWalletBalance = Math.max(
+            0,
+            Number(result?.bot_coins ?? demoWalletBalance - bet)
+        );
+
         demoWalletLedger.push({
             type: 'demo-bet',
             amount: -bet,
@@ -12621,26 +13092,54 @@
         return true;
     }
 
-    function creditLocalDemoWinner(gameKey, winnerName, participantCount, betAmount) {
+    async function creditLocalDemoWinner(gameKey, winnerName, participantCount, betAmount) {
         if (String(myName || '').trim() !== String(winnerName || '').trim()) return;
 
         const won = readSet(DEMO_GAME_WIN_KEY + getDemoWalletIdentity());
         if (won.has(gameKey)) return;
 
-        const count = Math.max(2, Number(participantCount || 0));
+        const count = Math.max(1, Number(participantCount || 0));
         const bet = Math.max(0, Number(betAmount || 0));
         const pot = count * bet;
-        const payout = Math.max(0, pot - DEMO_FEE);
+
+        // House keeps exactly 5%; winner receives exactly 95%.
+        const houseAmount =
+            Math.round(pot * DEMO_HOUSE_PERCENT * 100) / 100;
+
+        const payout =
+            Math.max(0, Math.round((pot - houseAmount) * 100) / 100);
 
         if (payout <= 0) return;
 
-        readDemoWallet();
-        demoWalletBalance += payout;
+        await readDemoWallet();
+
+        const { data, error } = await supabaseClient.rpc(
+            'adjust_least_count_demo_wallet',
+            {
+                p_session_token: authSessionToken,
+                p_reference: 'DEMO_WIN:' + String(gameKey),
+                p_amount: payout,
+                p_description: `Demo game winner payout · ₹${payout} (95% of ₹${pot}; house 5% ₹${houseAmount})`,
+                p_transaction_type: 'winner_payout'
+            }
+        );
+
+        if (error) {
+            console.error('Demo winner payout failed:', error);
+            return;
+        }
+
+        const result = Array.isArray(data) ? data[0] : data;
+        demoWalletBalance = Math.max(
+            0,
+            Number(result?.bot_coins ?? demoWalletBalance + payout)
+        );
+
         demoWalletLedger.push({
             type: 'demo-win',
             amount: payout,
             reference: gameKey,
-            description: `Demo game winner payout · ₹${payout}`,
+            description: `Demo game winner payout · ₹${payout} (95% of ₹${pot}; house 5% ₹${houseAmount})`,
             createdAt: new Date().toISOString()
         });
 
@@ -12732,7 +13231,14 @@
         closeDemoInsufficientModal();
     }
 
-    async function validateAndChargeDemoBetBeforeStart() {
+    // Same-room Start Again uses a two-step flow:
+    // 1) validate every player's CURRENT DEMO balance while the room is still
+    //    on the winner/waiting screen;
+    // 2) only after validation succeeds do we switch everyone to the new game.
+    // This prevents a player with ₹1 from being moved into the game screen.
+    window.__demoPrevalidatedStart = false;
+
+    async function validateAndChargeDemoBetBeforeStart(chargeHost = true) {
         if (betMode !== 'bet' || Number(betAmount || 0) <= 0) {
             return true;
         }
@@ -12746,16 +13252,58 @@
         const required = Number(betAmount || 0);
         const key = getDemoGameKey();
 
-        // Always make the host's current status available to itself and peers.
-        demoWalletRoomBalances[String(myClientToken || '')] = {
+        // Always read the host's current DEMO balance from Supabase.
+        await readDemoWallet();
+
+        const hostToken = String(myClientToken || '');
+        const requestId = [
+            String(roomCode || '').toUpperCase(),
+            String(Date.now()),
+            Math.random().toString(36).slice(2, 8)
+        ].join(':');
+
+        // Remove balances from previous games/previous validation requests.
+        // This is important: a stale balance must NEVER be accepted.
+        demoWalletRoomBalances = {};
+
+        // Host reports its own freshly loaded server balance.
+        demoWalletRoomBalances[hostToken] = {
             name: String(myName || 'Host'),
             balance: Number(demoWalletBalance || 0),
-            at: Date.now()
+            at: Date.now(),
+            requestId
         };
 
-        // Give guests a short opportunity to report their current demo balance.
-        broadcastDemoWalletStatus();
-        await new Promise(resolve => setTimeout(resolve, 450));
+        // Ask every connected participant to read its CURRENT server-side
+        // DEMO wallet and return the balance for this exact request.
+        if (typeof sendRealtimeMessage === 'function') {
+            try {
+                sendRealtimeMessage({
+                    type: 'DEMO_WALLET_STATUS_REQUEST',
+                    roomCode: String(roomCode || ''),
+                    requestId,
+                    required: required,
+                    requesterToken: hostToken
+                });
+            } catch (e) {}
+        }
+
+        const expectedTokens = participants
+            .map(player => String(player?.clientToken || player?.id || ''))
+            .filter(Boolean);
+
+        const deadline = Date.now() + 6000;
+
+        while (Date.now() < deadline) {
+            const allReported = expectedTokens.every(token => {
+                const row = demoWalletRoomBalances[token];
+                return row && row.requestId === requestId;
+            });
+
+            if (allReported) break;
+
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
 
         const insufficient = [];
 
@@ -12763,24 +13311,26 @@
             const token = String(player?.clientToken || player?.id || '');
             const known = demoWalletRoomBalances[token];
 
-            if (!known) {
+            if (!known || known.requestId !== requestId) {
                 insufficient.push({
                     clientToken: token,
                     name: String(player?.name || 'Player'),
                     balance: 0,
                     required,
-                    reason: 'Demo balance has not been reported yet.'
+                    reason: 'Could not verify the player DEMO wallet. Game was not started.'
                 });
                 return;
             }
 
-            if (Number(known.balance || 0) < required) {
+            const balance = Number(known.balance || 0);
+
+            if (balance < required) {
                 insufficient.push({
                     clientToken: token,
                     name: String(player?.name || known.name || 'Player'),
-                    balance: Number(known.balance || 0),
+                    balance,
                     required,
-                    reason: 'Not enough demo credits.'
+                    reason: `Player has only ₹${balance.toFixed(2).replace(/\.00$/, '')}. ₹${required.toFixed(2).replace(/\.00$/, '')} is required. Remove this player before starting.`
                 });
             }
         });
@@ -12790,14 +13340,21 @@
             return false;
         }
 
+        // For same-room Start Again prevalidation we only CHECK balances.
+        // The host is charged later, after the room/game state is prepared.
+        if (!chargeHost) {
+            return true;
+        }
+
         // Host pays its own demo bet before the authoritative game starts.
-        if (!chargeLocalDemoBet(key, required)) {
+        // The same server-side bot_coins wallet is charged.
+        if (!(await chargeLocalDemoBet(key, required))) {
             showDemoInsufficientModal([{
-                clientToken: String(myClientToken || ''),
+                clientToken: hostToken,
                 name: String(myName || 'Host'),
                 balance: Number(demoWalletBalance || 0),
                 required,
-                reason: 'Not enough demo credits.'
+                reason: `Only ₹${Number(demoWalletBalance || 0).toFixed(2).replace(/\.00$/, '')} available. ₹${required.toFixed(2).replace(/\.00$/, '')} is required to play.`
             }]);
             return false;
         }
@@ -12831,10 +13388,40 @@
 
         const gameKey = getDemoGameKey();
 
-        if (!chargeLocalDemoBet(gameKey, amount)) {
-            if (typeof logTicker === 'function') {
-                logTicker('WARNING: your demo balance was insufficient for this game.');
+        if (!(await chargeLocalDemoBet(gameKey, amount))) {
+            const me = Array.isArray(players)
+                ? players.find(p =>
+                    String(p?.clientToken || p?.id || '') === String(myClientToken || '')
+                )
+                : null;
+
+            if (me) {
+                me.viewOnly = true;
+                me.rejoinPending = false;
+                me.connected = true;
             }
+
+            if (typeof renderGameBoard === 'function') {
+                renderGameBoard();
+            }
+
+            // Tell the host that the final server-side charge failed.
+            try {
+                sendRealtimeMessage({
+                    type: 'DEMO_START_REJECTED',
+                    roomCode: String(roomCode || ''),
+                    clientToken: String(myClientToken || ''),
+                    playerName: String(myName || 'Player'),
+                    balance: Number(demoWalletBalance || 0),
+                    required: amount
+                });
+            } catch (e) {}
+
+            alert(
+                `You do not have enough DEMO balance to play this game.\n\n` +
+                `Available: ₹${Number(demoWalletBalance || 0).toFixed(2).replace(/\\.00$/, '')}\n` +
+                `Required: ₹${Number(amount || 0).toFixed(2).replace(/\\.00$/, '')}`
+            );
             return;
         }
     }
@@ -12851,16 +13438,84 @@
             const token = String(data.clientToken || '');
             if (!token) return;
 
+            const requestId = String(data.requestId || '');
+
+            // If this is a response to the current host validation request,
+            // keep the request id so stale balances cannot be accepted.
             demoWalletRoomBalances[token] = {
                 name: String(data.playerName || 'Player'),
                 balance: Math.max(0, Number(data.balance || 0)),
-                at: Date.now()
+                at: Date.now(),
+                requestId
             };
             return;
         }
 
+        if (data.type === 'DEMO_WALLET_STATUS_REQUEST') {
+            const requestId = String(data.requestId || '');
+
+            // Every participant reads its current server-side bot_coins value
+            // before answering. No browser-local wallet value is trusted.
+            readDemoWallet()
+                .then(() => {
+                    broadcastDemoWalletStatus(requestId);
+                })
+                .catch(error => {
+                    console.error('Unable to report DEMO wallet balance:', error);
+
+                    try {
+                        sendRealtimeMessage({
+                            type: 'DEMO_WALLET_STATUS',
+                            roomCode: String(roomCode || ''),
+                            clientToken: String(myClientToken || ''),
+                            playerName: String(myName || 'Player'),
+                            balance: 0,
+                            requestId,
+                            walletError: true
+                        });
+                    } catch (e) {}
+                });
+
+            return;
+        }
+
+        if (data.type === 'DEMO_START_REJECTED') {
+            if (isHost) {
+                const token = String(data.clientToken || '');
+                const name = String(data.playerName || 'Player');
+                const balance = Number(data.balance || 0);
+                const required = Number(data.required || betAmount || 0);
+
+                showDemoInsufficientModal([{
+                    clientToken: token,
+                    name,
+                    balance,
+                    required,
+                    reason: `Player ${name} could not pay the DEMO bet. Only ₹${balance.toFixed(2).replace(/\\.00$/, '')} is available.`
+                }]);
+
+                if (Array.isArray(players)) {
+                    const player = players.find(p =>
+                        String(p?.clientToken || p?.id || '') === token
+                    );
+
+                    if (player) {
+                        player.viewOnly = true;
+                        player.rejoinPending = false;
+                    }
+                }
+
+                if (typeof broadcastPlayerList === 'function') {
+                    try { broadcastPlayerList(); } catch (e) {}
+                }
+            }
+            return;
+        }
+
         if (data.type === 'START_GAME') {
-            processIncomingDemoStart(data).catch(() => {});
+            processIncomingDemoStart(data).catch(error => {
+                console.error('Demo start wallet validation failed:', error);
+            });
         }
     }
 
@@ -12878,7 +13533,7 @@
         const _demoOriginalLoadWallets = loadWallets;
         loadWallets = async function () {
             const result = await _demoOriginalLoadWallets();
-            readDemoWallet();
+            await readDemoWallet();
             return result;
         };
     }
@@ -12888,8 +13543,28 @@
         const _demoOriginalStartHostGame = startHostGame;
         startHostGame = async function () {
             if (betMode === 'bet' && Number(betAmount || 0) > 0) {
-                const allowed = await validateAndChargeDemoBetBeforeStart();
-                if (!allowed) return false;
+                // Same-room Start Again already checked all players before
+                // changing the screen. In that case, only charge the host now.
+                if (window.__demoPrevalidatedStart === true) {
+                    window.__demoPrevalidatedStart = false;
+
+                    const hostKey = getDemoGameKey();
+                    const required = Number(betAmount || 0);
+
+                    if (!(await chargeLocalDemoBet(hostKey, required))) {
+                        showDemoInsufficientModal([{
+                            clientToken: String(myClientToken || ''),
+                            name: String(myName || 'Host'),
+                            balance: Number(demoWalletBalance || 0),
+                            required,
+                            reason: `Only ₹${Number(demoWalletBalance || 0).toFixed(2).replace(/\.00$/, '')} available. ₹${required.toFixed(2).replace(/\.00$/, '')} is required to play.`
+                        }]);
+                        return false;
+                    }
+                } else {
+                    const allowed = await validateAndChargeDemoBetBeforeStart(true);
+                    if (!allowed) return false;
+                }
             }
 
             const result = await _demoOriginalStartHostGame();
@@ -12904,7 +13579,7 @@
         createRoom = async function () {
             const result = await _demoOriginalCreateRoom();
             demoWalletRoomBalances = {};
-            readDemoWallet();
+            await readDemoWallet();
             broadcastDemoWalletStatus();
             return result;
         };
@@ -12915,8 +13590,8 @@
         joinRoom = function () {
             const result = _demoOriginalJoinRoom();
             demoWalletRoomBalances = {};
-            setTimeout(() => {
-                readDemoWallet();
+            setTimeout(async () => {
+                await readDemoWallet();
                 broadcastDemoWalletStatus();
             }, 500);
             return result;
@@ -12932,16 +13607,25 @@
 
             if (shown && betMode === 'bet' && Number(betAmount || 0) > 0) {
                 const winnerName = String(args[0] || '').trim();
-                const participants = Array.isArray(args[2]) && args[2].length
-                    ? args[2]
-                    : (Array.isArray(players) ? players : []);
+
+                const participants =
+                    Array.isArray(currentGameParticipantsSnapshot) &&
+                    currentGameParticipantsSnapshot.length
+                        ? currentGameParticipantsSnapshot
+                        : (
+                            Array.isArray(args[2]) && args[2].length
+                                ? args[2]
+                                : (Array.isArray(players) ? players : [])
+                        );
 
                 creditLocalDemoWinner(
                     getDemoGameKey(),
                     winnerName,
                     participants.filter(p => p && p.viewOnly !== true).length,
                     Number(betAmount || 0)
-                );
+                ).catch(error => {
+                    console.error('Demo winner wallet update failed:', error);
+                });
             }
 
             return shown;
@@ -12962,11 +13646,377 @@
     window.closeDemoWalletModal = closeDemoWalletModal;
 window.closeDemoInsufficientModal = closeDemoInsufficientModal;
     window.removeDemoInsufficientPlayers = removeDemoInsufficientPlayers;
+    window.validateDemoBetBeforeStart = validateAndChargeDemoBetBeforeStart;
 
-    // Initial local render; login flow will reload it using the current account identity.
-    readDemoWallet();
+    // Expose only the small server-wallet helpers needed by the main game
+    // completion/room-creation logic. The actual wallet implementation stays
+    // inside this DEMO wallet module.
+    window.getLeastCountDemoBalance = async function () {
+        await readDemoWallet();
+        return Number(demoWalletBalance || 0);
+    };
+
+    window.getLeastCountDemoGameKey = getDemoGameKey;
+    window.creditLeastCountDemoWinner = creditLocalDemoWinner;
+
+    // Initial render; after login this is loaded from the server-side DEMO wallet.
+    readDemoWallet().catch(error => console.error('Initial demo wallet load failed:', error));
 })();
 </script>
 
+
+<script>
+(function(){
+'use strict';
+
+// ================================================================
+// FINAL ROUND / BET SETTLEMENT RELIABILITY PATCH
+// This layer intentionally sits AFTER all existing wrappers.
+// It makes final SHOW results, winner popup, demo payout and bet
+// history independent from one another.
+// ================================================================
+
+const __lcOriginalHandleIncomingNetworkData = handleIncomingNetworkData;
+const __lcOriginalSendRealtimeMessage = sendRealtimeMessage;
+
+const __lcProcessedFinalEvents = new Set();
+const __lcFinalizationPromises = new Map();
+
+function __lcEventRoom(data){
+    return String(data?.roomCode || '').trim().toUpperCase();
+}
+function __lcCurrentRoom(){
+    return String(roomCode || '').trim().toUpperCase();
+}
+function __lcSameRoom(data){
+    const a=__lcEventRoom(data), b=__lcCurrentRoom();
+    return !!a && !!b && a===b;
+}
+function __lcEventKey(data){
+    return String(data?.roundResultEventId || data?.finalEventId || [
+        __lcEventRoom(data),
+        String(data?.roomGameSequence || roomGameSequence || 1),
+        String(data?.callerName || ''),
+        String(data?.gameHistory?.length || 0),
+        String(data?.tournamentWinner || data?.winnerName || '')
+    ].join('|'));
+}
+
+function __lcClone(v,fallback){
+    try{return JSON.parse(JSON.stringify(v));}catch(e){return fallback;}
+}
+
+// ----------------------------------------------------------------
+// Winner popup: do NOT depend on the old popup wrappers returning true.
+// Always render the existing modal and its three buttons directly.
+// ----------------------------------------------------------------
+function __lcForceWinnerPopup(winnerName,eventRoomCode,roundPlayers,callerName,finalRoundHistory){
+    if(!__lcSameRoom({roomCode:eventRoomCode})) return false;
+
+    const winner=String(winnerName||'Nobody').trim() || 'Nobody';
+    const modal=document.getElementById('tournament-winner-modal');
+    if(!modal) return false;
+
+    // One winner popup per game. Start Again resets this flag in the existing code.
+    const key=[__lcCurrentRoom(),String(roomGameSequence||1),String(walletGameId||''),winner].join('::');
+    if(window.__lcWinnerPopupKey===key && !modal.classList.contains('hidden')) return true;
+    window.__lcWinnerPopupKey=key;
+
+    const snapshot=Array.isArray(roundPlayers)&&roundPlayers.length ? roundPlayers : (Array.isArray(players)?players:[]);
+    const finalRound=finalRoundHistory || (Array.isArray(gameHistory)&&gameHistory.length ? gameHistory[gameHistory.length-1] : null);
+
+    const winnerEl=document.getElementById('tournament-winner-name');
+    if(winnerEl) winnerEl.textContent=winner;
+
+    const payoutEl=document.getElementById('tournament-winner-payout');
+    if(payoutEl){
+        if(betMode==='bet' && Number(betAmount||0)>0 && winner!=='Nobody'){
+            const participants=(Array.isArray(currentGameParticipantsSnapshot)&&currentGameParticipantsSnapshot.length
+                ? currentGameParticipantsSnapshot : snapshot).filter(p=>p&&p.viewOnly!==true);
+            const pot=participants.length*Number(betAmount||0);
+            const house=Math.round(pot*0.05*100)/100;
+            const prize=Math.round((pot-house)*100)/100;
+            payoutEl.classList.remove('hidden');
+            payoutEl.innerHTML='<div class="text-[9px] uppercase tracking-wider text-zinc-400 font-black">Demo Prize</div>'+
+                '<div class="text-lg font-black text-emerald-300 mt-0.5">Winner gets ₹'+prize.toFixed(2).replace(/\\.00$/,'')+'</div>'+
+                '<div class="text-[9px] text-zinc-400 mt-0.5">Total pot ₹'+pot.toFixed(2).replace(/\\.00$/,'')+' · House 5% ₹'+house.toFixed(2).replace(/\\.00$/,'')+'</div>';
+        }else{
+            payoutEl.classList.add('hidden');
+            payoutEl.innerHTML='';
+        }
+    }
+
+    const cardsEl=document.getElementById('tournament-winner-cards');
+    if(cardsEl){
+        const rows=snapshot.filter(p=>p&&Array.isArray(p.hand)).map(p=>{
+            const vals=p.hand.map(c=>String(c?.val??c?.value??'').trim().toUpperCase()).filter(Boolean).join(' · ');
+            const win=String(p.name||'').trim()===winner;
+            const caller=String(p.name||'').trim()===String(callerName||'').trim();
+            return '<div class="flex items-center justify-between gap-2 rounded-md border '+(win?'border-emerald-500/40':'border-zinc-800')+' bg-zinc-950/70 px-2 py-1">'+
+                '<span class="truncate text-[9px] font-black text-white">'+__lcEsc(p.name||'Player')+(win?' <span class="text-emerald-400">WIN</span>':'')+(caller?' <span class="text-amber-400">SHOW</span>':'')+'</span>'+
+                '<span class="text-[9px] text-zinc-300 truncate">'+__lcEsc(vals||'No cards')+'</span></div>';
+        }).join('');
+        cardsEl.innerHTML=rows||'<div class="text-[9px] text-zinc-500 italic text-center">Cards are not available.</div>';
+    }
+
+    const historyEl=document.getElementById('tournament-winner-round-history');
+    if(historyEl){
+        if(finalRound){
+            const details=Array.isArray(finalRound.details)?finalRound.details:[];
+            historyEl.innerHTML='<div class="text-[8px] text-amber-300 font-black mb-1">Round '+__lcEsc(finalRound.roundNumber??'—')+' · '+__lcEsc(finalRound.callerName||callerName||'SHOW')+' · '+__lcEsc(finalRound.outcome||'Result')+'</div>'+details.map(d=>
+                '<div class="flex justify-between gap-2 py-0.5 border-b border-zinc-900 last:border-0 text-[8px]">'+
+                '<span class="truncate text-zinc-200">'+__lcEsc(d.name||'Player')+'</span>'+
+                '<span class="shrink-0 text-zinc-400">Hand '+__lcEsc(d.sum??'—')+' · '+(Number(d.pointsAdded)>0?'+':'')+__lcEsc(d.pointsAdded??0)+' · Total '+__lcEsc(d.totalAfterRound??'—')+'</span></div>'
+            ).join('');
+        }else historyEl.innerHTML='<div class="text-[9px] text-zinc-500 italic text-center">Round history is not available.</div>';
+    }
+
+    // Explicitly guarantee the three actions are present and visible.
+    const actionContainer=modal.querySelector('.grid.grid-cols-3');
+    if(actionContainer){
+        actionContainer.innerHTML=
+            '<button type="button" onclick="stayInTournamentGame()" class="py-1.5 px-1 bg-emerald-500 hover:bg-emerald-400 text-black font-black rounded-lg shadow transition text-[9px] sm:text-[10px] leading-tight">Stay in Room</button>'+
+            '<button type="button" onclick="startAgainSamePlayers()" class="py-1.5 px-1 bg-indigo-600 hover:bg-indigo-500 text-white font-black rounded-lg shadow transition text-[9px] sm:text-[10px] leading-tight">Start Again</button>'+
+            '<button type="button" onclick="exitTournamentToLobby()" class="py-1.5 px-1 bg-rose-600 hover:bg-rose-500 text-white font-black rounded-lg shadow transition text-[9px] sm:text-[10px] leading-tight">Exit</button>';
+    }
+
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    return true;
+}
+function __lcEsc(v){
+    return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+}
+
+// Replace the binding used by all later calls.
+showTournamentWinnerPopup=__lcForceWinnerPopup;
+window.showTournamentWinnerPopup=__lcForceWinnerPopup;
+
+// ----------------------------------------------------------------
+// Bet history finalization. Push/broadcast LOCAL data first. Database
+// persistence is best-effort and cannot block the room history update.
+// ----------------------------------------------------------------
+async function __lcRecordCompletedRoomGame(finalWinner){
+    const winner=String(finalWinner||'').trim();
+    if(!isHost || !roomCode || !winner || winner==='Nobody') return false;
+
+    const gameId=String(walletGameId || `${roomCode}-game-${roomGameSequence||1}`);
+    if(completedRoomGameIds.has(gameId)) return true;
+    if(__lcFinalizationPromises.has(gameId)) return __lcFinalizationPromises.get(gameId);
+
+    const promise=(async()=>{
+        const participants=Array.isArray(currentGameParticipantsSnapshot)&&currentGameParticipantsSnapshot.length
+            ? currentGameParticipantsSnapshot
+            : getCurrentRoomParticipants().map(p=>({name:p.name,id:p.id,clientToken:p.clientToken,isBot:p.isBot===true}));
+
+        const settlement=(betMode==='bet' && Number(betAmount||0)>0)
+            ? {roundNumber:Array.isArray(gameHistory)&&gameHistory.length?gameHistory[gameHistory.length-1].roundNumber:0,
+               winner,
+               amountPerLoser:Number(betAmount),
+               rows:participants.filter(p=>p&&p.name&&String(p.name).trim()!==winner).map(p=>({from:String(p.name),to:winner,amount:Number(betAmount)}))}
+            : null;
+
+        const snapshot={
+            gameId,
+            gameNumber:Number(roomGameSequence||roomCompletedGames.length+1||1),
+            roomCode:String(roomCode),
+            winner,
+            completedAt:new Date().toISOString(),
+            players:__lcClone(participants,[]),
+            betMode,
+            betAmount:Number(betAmount||0),
+            betSettlements:settlement?[settlement]:[],
+            rounds:__lcClone(gameHistory,[])
+        };
+
+        roomCompletedGames=Array.isArray(roomCompletedGames)?roomCompletedGames:[];
+        betHistoryLedger=Array.isArray(betHistoryLedger)?betHistoryLedger:[];
+        roomCompletedGames.push(snapshot);
+        completedRoomGameIds.add(gameId);
+
+        if(settlement){
+            betHistoryLedger.push({
+                gameNumber:snapshot.gameNumber,
+                roundNumber:settlement.roundNumber,
+                winner,
+                amountPerLoser:settlement.amountPerLoser,
+                rows:__lcClone(settlement.rows,[]),
+                type:'completed-game'
+            });
+        }
+
+        // Persist locally immediately.
+        try{saveLocalRoomSession();}catch(e){console.warn('Local room save failed',e);}
+        try{renderBetDisplays();}catch(e){}
+
+        // Broadcast the COMPLETE updated history before any database call.
+        try{
+            await __lcOriginalSendRealtimeMessage({
+                type:'BET_ROOM_HISTORY_UPDATE',
+                roomCode,
+                betMode,
+                betAmount,
+                betHistoryLedger:__lcClone(betHistoryLedger,[]),
+                roomCompletedGames:__lcClone(roomCompletedGames,[]),
+                roomGameSequence:Number(roomGameSequence||0),
+                completedGameId:gameId,
+                completedWinner:winner
+            });
+        }catch(e){console.warn('Immediate bet history broadcast failed',e);}
+
+        // Then persist to Supabase. Never throw back into the game result path.
+        try{await syncGameHistoryToSupabase(winner);}catch(e){console.error('Final game history DB save failed',e);}
+        try{await persistRoomStateToSupabase();}catch(e){console.error('Final room state DB save failed',e);}
+
+        return true;
+    })();
+
+    __lcFinalizationPromises.set(gameId,promise);
+    try{return await promise;}finally{__lcFinalizationPromises.delete(gameId);}
+}
+recordCompletedRoomGame=__lcRecordCompletedRoomGame;
+finalizeCompletedRoomGameOnce=async function(winner){
+    return __lcRecordCompletedRoomGame(winner);
+};
+
+// ----------------------------------------------------------------
+// Demo winner payout: invoke directly from final event, never from popup.
+// ----------------------------------------------------------------
+async function __lcSettleDemoWinner(data){
+    if(!data?.tournamentWinner) return;
+    if(betMode!=='bet' || Number(betAmount||0)<=0) return;
+    if(typeof window.creditLeastCountDemoWinner!=='function' || typeof window.getLeastCountDemoGameKey!=='function') return;
+
+    const participants=(Array.isArray(currentGameParticipantsSnapshot)&&currentGameParticipantsSnapshot.length
+        ? currentGameParticipantsSnapshot
+        : (Array.isArray(data.players)?data.players:players)).filter(p=>p&&p.viewOnly!==true);
+    const key=String(data.demoGameKey || window.getLeastCountDemoGameKey());
+    try{
+        await window.creditLeastCountDemoWinner(key,String(data.tournamentWinner),participants.length,Number(betAmount));
+    }catch(e){console.error('Reliable demo winner payout failed',e);}
+}
+
+// ----------------------------------------------------------------
+// One deterministic final-result processor for HOST + GUEST.
+// ----------------------------------------------------------------
+async function __lcApplyFinalRound(data){
+    if(!__lcSameRoom(data)) return false;
+    const key=__lcEventKey(data);
+    if(__lcProcessedFinalEvents.has(key)) return true;
+    __lcProcessedFinalEvents.add(key);
+
+    if(Array.isArray(data.players)) players=__lcClone(data.players,players);
+    if(Array.isArray(data.gameHistory)) gameHistory=__lcClone(data.gameHistory,gameHistory);
+    if(data.walletGameId) walletGameId=String(data.walletGameId);
+    if(data.gameOpponentCount!==undefined) gameOpponentCount=Math.max(1,Math.trunc(Number(data.gameOpponentCount)||1));
+    if(data.betMode) betMode=data.betMode;
+    if(data.betAmount!==undefined) betAmount=Number(data.betAmount)||0;
+    if(Array.isArray(data.currentGameParticipantsSnapshot) && data.currentGameParticipantsSnapshot.length) currentGameParticipantsSnapshot=__lcClone(data.currentGameParticipantsSnapshot,currentGameParticipantsSnapshot);
+
+    myIndex=players.findIndex(p=>p&&(p.id===myId||p.clientToken===myClientToken));
+    roundActive=false;
+
+    // Always show the round result first, synchronously, on EVERY client.
+    try{showRoundOverModal(data.resultsData||'',data.callerName||'Player',data.tournamentWinner||'');}catch(e){console.error('Round result popup failed',e);}
+    try{renderGameBoard();}catch(e){}
+
+    if(data.tournamentWinner){
+        // Winner popup is independent of all settlement work.
+        try{__lcForceWinnerPopup(data.tournamentWinner,data.roomCode,data.players||players,data.callerName||'',data.finalRoundHistory || (Array.isArray(data.gameHistory)&&data.gameHistory.length?data.gameHistory[data.gameHistory.length-1]:null));}catch(e){console.error('Winner popup failed',e);}
+
+        // Each player's normal game-wallet settlement remains separate.
+        try{await settleWalletForCompletedGame(data.tournamentWinner,gameOpponentCount,isSoloMode?'bot':'real');}catch(e){console.error('Game wallet settlement failed',e);}
+
+        // Winner's 95% DEMO prize.
+        await __lcSettleDemoWinner(data);
+
+        // ONLY HOST writes room bet history.
+        if(isHost){
+            try{await __lcRecordCompletedRoomGame(data.tournamentWinner);}catch(e){console.error('Bet history finalization failed',e);}
+        }
+    }else{
+        try{await settleWalletForEliminatedPlayer(isSoloMode?'bot':'real');}catch(e){console.error('Eliminated wallet settlement failed',e);}
+    }
+
+    try{saveLocalRoomSession();}catch(e){}
+    return true;
+}
+
+// Override result application used by executeShowRound.
+applyRoundResultForEveryone=__lcApplyFinalRound;
+
+// ----------------------------------------------------------------
+// Incoming events: final result packets are consumed here before the old
+// host-only handler. This is the key fix for guest browsers.
+// ----------------------------------------------------------------
+handleIncomingNetworkData=async function(data){
+    if(data && (data.type==='ROUND_RESULT_ALL' || data.type==='ROUND_OVER')){
+        if(data.type==='ROUND_OVER') data={...data,type:'ROUND_RESULT_ALL'};
+        await __lcApplyFinalRound(data);
+        return;
+    }
+    if(data && data.type==='TOURNAMENT_WINNER'){
+        if(!__lcSameRoom(data)) return;
+        if(Array.isArray(data.players)) players=__lcClone(data.players,players);
+        if(Array.isArray(data.gameHistory)) gameHistory=__lcClone(data.gameHistory,gameHistory);
+        if(data.walletGameId) walletGameId=String(data.walletGameId);
+        if(data.gameOpponentCount!==undefined) gameOpponentCount=Math.max(1,Math.trunc(Number(data.gameOpponentCount)||1));
+        try{__lcForceWinnerPopup(data.winnerName,data.roomCode,data.players||players,data.callerName||'',data.finalRoundHistory || (Array.isArray(data.gameHistory)&&data.gameHistory.length?data.gameHistory[data.gameHistory.length-1]:null));}catch(e){console.error(e);}
+        try{await settleWalletForCompletedGame(data.winnerName,gameOpponentCount,isSoloMode?'bot':'real');}catch(e){}
+        await __lcSettleDemoWinner({tournamentWinner:data.winnerName,players:data.players,roomCode:data.roomCode});
+        if(isHost) try{await __lcRecordCompletedRoomGame(data.winnerName);}catch(e){console.error(e);}
+        return;
+    }
+    return __lcOriginalHandleIncomingNetworkData(data);
+};
+
+// ----------------------------------------------------------------
+// Final event transport retry. Duplicates are safe because final events are
+// idempotent on every client.
+// ----------------------------------------------------------------
+sendRealtimeMessage=async function(message){
+    const result=await __lcOriginalSendRealtimeMessage(message);
+    if(message && (message.type==='ROUND_RESULT_ALL' || message.type==='TOURNAMENT_WINNER')){
+        // Give Supabase realtime a second opportunity when the first send was
+        // accepted but a client was still subscribing.
+        setTimeout(()=>{try{__lcOriginalSendRealtimeMessage(message);}catch(e){}},350);
+        setTimeout(()=>{try{__lcOriginalSendRealtimeMessage(message);}catch(e){}},1000);
+    }
+    return result;
+};
+
+// Guest/host history packet application must update UI immediately.
+const __lcOriginalBetHistoryHandler=__lcOriginalHandleIncomingNetworkData;
+// The old handler already has BET_ROOM_HISTORY_UPDATE support; wrap it only
+// to guarantee the local arrays are updated before delegating.
+const __lcOldHandlerForHistory=handleIncomingNetworkData;
+handleIncomingNetworkData=async function(data){
+    if(data && data.type==='BET_ROOM_HISTORY_UPDATE' && __lcSameRoom(data)){
+        if(Array.isArray(data.betHistoryLedger)) betHistoryLedger=__lcClone(data.betHistoryLedger,betHistoryLedger);
+        if(Array.isArray(data.roomCompletedGames)){
+            roomCompletedGames=__lcClone(data.roomCompletedGames,roomCompletedGames);
+            completedRoomGameIds=new Set(roomCompletedGames.map(g=>String(g.gameId||'')));
+        }
+        if(data.roomGameSequence!==undefined) roomGameSequence=Math.max(Number(roomGameSequence||0),Number(data.roomGameSequence||0));
+        try{saveLocalRoomSession();}catch(e){}
+        try{renderBetDisplays();}catch(e){}
+        return;
+    }
+    return __lcOldHandlerForHistory(data);
+};
+
+// Ensure Start Again resets the popup key for the new game.
+const __lcOldStartAgain=startAgainSamePlayers;
+startAgainSamePlayers=async function(){
+    window.__lcWinnerPopupKey='';
+    tournamentWinnerShown=false;
+    return __lcOldStartAgain.apply(this,arguments);
+};
+window.startAgainSamePlayers=startAgainSamePlayers;
+
+console.log('Least Count FINAL reliability patch loaded');
+})();
+
+</script>
 </body>
 </html>
